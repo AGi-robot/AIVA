@@ -25,9 +25,10 @@ Chat runs in the separate `aiva_chat` ROS package, not in SCS. It decodes
 `/telepathic/stimulus`, sends recent turns to an OpenAI-compatible chat API,
 and publishes `start` / `delta` / `done` response events on
 `/tms/text_response`, which the WebUI already displays. Recent turns persist
-in PostgreSQL (8 exchanges by default). It also creates basic document and
-chunk tables for a future knowledge-base ingester. Vector search is not
-enabled yet.
+in PostgreSQL without deleting older turns. It sends only the latest 8
+exchanges to the LLM as active context. It also creates basic document and
+chunk tables for a future knowledge-base ingester. Older conversations are
+archived but not semantically recalled yet; vector search is not enabled.
 
 For a local Ollama server, set `AIVA_LLM_BASE_URL` and `AIVA_LLM_MODEL` if your
 model or address differs from the defaults. Start Ollama, rosbridge, the AIVA
