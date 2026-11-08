@@ -19,25 +19,14 @@ set +u
 source "$ROS_SETUP"
 set -u
 
-workspace_ready=1
-for package in "${WORKSPACE_PACKAGES[@]}"; do
-  if [[ ! -f "$SCRIPT_DIR/install/$package/share/ament_index/resource_index/packages/$package" ]]; then
-    workspace_ready=0
-    break
-  fi
-done
-
-if [[ ! -f "$WORKSPACE_SETUP" || "$workspace_ready" -eq 0 ]]; then
-  if ! command -v colcon >/dev/null 2>&1; then
-    echo "AIVA workspace is not built and colcon is unavailable." >&2
-    echo "Install colcon or build the workspace from $SCRIPT_DIR." >&2
-    exit 1
-  fi
-  echo "AIVA workspace is incomplete; building from $SCRIPT_DIR..."
-  AIVA_ROS_PYTHON="$(command -v python3)"
-  (cd "$SCRIPT_DIR" && colcon build \
-    --cmake-args "-DPython3_EXECUTABLE=$AIVA_ROS_PYTHON")
+if ! command -v colcon >/dev/null 2>&1; then
+  echo "colcon is unavailable; cannot build the AIVA workspace." >&2
+  exit 1
 fi
+echo "Building AIVA workspace from $SCRIPT_DIR..."
+AIVA_ROS_PYTHON="$(command -v python3)"
+(cd "$SCRIPT_DIR" && colcon build \
+  --cmake-args "-DPython3_EXECUTABLE=$AIVA_ROS_PYTHON")
 
 if [[ ! -f "$WORKSPACE_SETUP" ]]; then
   echo "Workspace build completed without creating $WORKSPACE_SETUP." >&2
