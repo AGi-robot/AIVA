@@ -14,7 +14,9 @@ if [[ ! -f "$ROS_SETUP" ]]; then
   echo "Set ROS_SETUP to your ROS 2 setup.bash path." >&2
   exit 1
 fi
+set +u
 source "$ROS_SETUP"
+set -u
 
 if [[ ! -f "$WORKSPACE_SETUP" ]]; then
   if ! command -v colcon >/dev/null 2>&1; then
@@ -31,7 +33,9 @@ if [[ ! -f "$WORKSPACE_SETUP" ]]; then
   exit 1
 fi
 
+set +u
 source "$WORKSPACE_SETUP"
+set -u
 mkdir -p "$LOG_DIR"
 
 pids=()
