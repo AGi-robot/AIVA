@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -11,8 +12,25 @@ from aiva_cryptic_signal_core import CrypticSignalCore
 from cryptic_signal_core.msg import TelepathicSignal
 from rclpy.node import Node
 from std_msgs.msg import String
+from ament_index_python.packages import get_package_share_directory
 
 from .memory import GraceMemory
+
+
+def _load_soul() -> str:
+    """Load AIVA's packaged soul, with a source-workspace fallback."""
+    candidates = []
+    try:
+        candidates.append(Path(get_package_share_directory("aiva_chat")) / "persona" / "SOUL.md")
+    except Exception:
+        pass
+    candidates.append(Path(__file__).resolve().parents[4] / "persona" / "SOUL.md")
+    for path in candidates:
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+    return "You are Grace, AIVA's thoughtful and helpful companion."
 
 
 class AivaChat(Node):
@@ -23,13 +41,25 @@ class AivaChat(Node):
         self.declare_parameter("input_topic", "/telepathic/stimulus")
         self.declare_parameter("response_topic", "/tms/text_response")
         self.declare_parameter("llm_base_url", os.getenv("AIVA_LLM_BASE_URL", "http://127.0.0.1:11434/v1"))
-        self.declare_parameter("llm_model", os.getenv("AIVA_LLM_MODEL", "llama3.2"))
-        self.declare_parameter("system_prompt", "You are Grace, AIVA's thoughtful and helpful companion.")
+        self.declare_parameter(
+            "llm_model",
+            os.getenv("AIVA_LLM_MODEL", "hf.co/unsloth/Ministral-3-14B-Instruct-2512-GGUF:UD-Q4_K_XL"),
+        )
+        self.declare_parameter("system_prompt", _load_soul())
+        self.declare_parameter("agi_home", os.getenv("AGI_HOME", "~/.agi"))
         self.declare_parameter("database_url", os.getenv("AIVA_DATABASE_URL", ""))
         self.declare_parameter("memory_turns", 8)
         self._base_url = str(self.get_parameter("llm_base_url").value).rstrip("/")
         self._model = str(self.get_parameter("llm_model").value)
         self._system_prompt = str(self.get_parameter("system_prompt").value)
+        profile_path = Path(str(self.get_parameter("agi_home").value)).expanduser() / "profile" / "user.md"
+        try:
+            user_profile = profile_path.read_text(encoding="utf-8").strip()
+        except OSError as error:
+            user_profile = ""
+            self.get_logger().warning(f"User profile unavailable at {profile_path}: {error}")
+        if user_profile:
+            self._system_prompt += f"\n\nUser profile (trusted context; do not invent beyond it):\n{user_profile}"
         database_url = str(self.get_parameter("database_url").value)
         self._memory = GraceMemory(database_url, int(self.get_parameter("memory_turns").value))
         self._cryptic = CrypticSignalCore()

@@ -72,10 +72,15 @@ ros2 run aiva_chat aiva_chat
 ros2 run telepathic_management telepathic_console
 ```
 
+The chat node reads `profile/user.md` from the AGi data directory. The ROS
+parameter `agi_home` defaults to `~/.agi` and can be set with `AGI_HOME` or a
+ROS override such as `ros2 run aiva_chat aiva_chat --ros-args -p agi_home:=/path/to/.agi`.
+The profile is added to Grace's system context when the file exists.
+
 Rosbridge must listen at `127.0.0.1:9090`; the console backend publishes the
 input signal there, and the browser receives responses through its WebSocket
 proxy. The default LLM endpoint is `http://127.0.0.1:11434/v1` and default
-model is `llama3.2`. For an authenticated endpoint, set `AIVA_LLM_API_KEY` in
+model is `hf.co/unsloth/Ministral-3-14B-Instruct-2512-GGUF:UD-Q4_K_XL`. For an authenticated endpoint, set `AIVA_LLM_API_KEY` in
 the environment; never put it in the ROS message or source files.
 
 Set `AIVA_DATABASE_URL` before starting the chat node, for example
