@@ -14,13 +14,23 @@ if [[ ! -f "$ROS_SETUP" ]]; then
   echo "Set ROS_SETUP to your ROS 2 setup.bash path." >&2
   exit 1
 fi
+source "$ROS_SETUP"
+
 if [[ ! -f "$WORKSPACE_SETUP" ]]; then
-  echo "AIVA workspace is not built yet: $WORKSPACE_SETUP" >&2
-  echo "Build it from $SCRIPT_DIR, then run this script again." >&2
+  if ! command -v colcon >/dev/null 2>&1; then
+    echo "AIVA workspace is not built and colcon is unavailable." >&2
+    echo "Install colcon or build the workspace from $SCRIPT_DIR." >&2
+    exit 1
+  fi
+  echo "AIVA workspace setup is missing; building from $SCRIPT_DIR..."
+  (cd "$SCRIPT_DIR" && colcon build --symlink-install)
+fi
+
+if [[ ! -f "$WORKSPACE_SETUP" ]]; then
+  echo "Workspace build completed without creating $WORKSPACE_SETUP." >&2
   exit 1
 fi
 
-source "$ROS_SETUP"
 source "$WORKSPACE_SETUP"
 mkdir -p "$LOG_DIR"
 
