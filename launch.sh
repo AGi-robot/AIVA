@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname -- "$SCRIPT_DIR")"
 ROS_SETUP="${ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
 WORKSPACE_SETUP="$SCRIPT_DIR/install/setup.bash"
+WORKSPACE_PACKAGES=(aiva_chat cryptic_signal_core scs)
 WEBUI_URL="${AIVA_WEBUI_URL:-http://127.0.0.1:${AGI_WEB_TELEOPS_CONSOLE_PORT:-8853}}"
 START_CHAT="${AIVA_START_CHAT:-1}"
 LOG_DIR="${AIVA_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agi/aiva}"
@@ -18,20 +19,37 @@ set +u
 source "$ROS_SETUP"
 set -u
 
-if [[ ! -f "$WORKSPACE_SETUP" ]]; then
+workspace_ready=1
+for package in "${WORKSPACE_PACKAGES[@]}"; do
+  if [[ ! -f "$SCRIPT_DIR/install/$package/share/ament_index/resource_index/packages/$package" ]]; then
+    workspace_ready=0
+    break
+  fi
+done
+
+if [[ ! -f "$WORKSPACE_SETUP" || "$workspace_ready" -eq 0 ]]; then
   if ! command -v colcon >/dev/null 2>&1; then
     echo "AIVA workspace is not built and colcon is unavailable." >&2
     echo "Install colcon or build the workspace from $SCRIPT_DIR." >&2
     exit 1
   fi
-  echo "AIVA workspace setup is missing; building from $SCRIPT_DIR..."
-  (cd "$SCRIPT_DIR" && colcon build --symlink-install)
+  echo "AIVA workspace is incomplete; building from $SCRIPT_DIR..."
+  AIVA_ROS_PYTHON="$(command -v python3)"
+  (cd "$SCRIPT_DIR" && colcon build --symlink-install \
+    --cmake-args "-DPython3_EXECUTABLE=$AIVA_ROS_PYTHON")
 fi
 
 if [[ ! -f "$WORKSPACE_SETUP" ]]; then
   echo "Workspace build completed without creating $WORKSPACE_SETUP." >&2
   exit 1
 fi
+
+for package in "${WORKSPACE_PACKAGES[@]}"; do
+  if [[ ! -f "$SCRIPT_DIR/install/$package/share/ament_index/resource_index/packages/$package" ]]; then
+    echo "Workspace build did not install required package: $package" >&2
+    exit 1
+  fi
+done
 
 set +u
 source "$WORKSPACE_SETUP"
