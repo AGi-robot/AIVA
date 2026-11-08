@@ -1,5 +1,22 @@
 # AIVA presence
 
+## Quick start
+
+Open `AGi/AIVA.code-workspace` in VS Code to keep the Explorer focused on AIVA;
+AuRoRA remains in the shared Git repository but is outside this workspace view.
+To start the local WebUI, rosbridge, and chat node together, run:
+
+```sh
+cd ~/AGi/AIVA
+./launch.sh
+```
+
+The launcher opens `http://127.0.0.1:8853` and writes service logs under
+`~/.local/state/agi/aiva/`. Press Ctrl+C to stop the services. Set
+`AIVA_START_CHAT=0` to start only rosbridge and the WebUI. The script expects
+ROS 2 Jazzy and a built AIVA workspace; set `ROS_SETUP` if ROS is installed at
+a different path.
+
 ## Central neural system packages
 
 Packages grouped under `src/central_neural_system/` belong to AIVA's central neural system. For
