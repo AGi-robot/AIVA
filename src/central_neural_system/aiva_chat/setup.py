@@ -15,7 +15,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/persona", [soul_source]),
     ],
-    install_requires=["setuptools", "httpx", "psycopg[binary]>=3.2,<4"],
+    install_requires=["setuptools", "httpx"],
     zip_safe=True,
     maintainer="OppaAI",
     maintainer_email="oppa.ai.org@gmail.com",

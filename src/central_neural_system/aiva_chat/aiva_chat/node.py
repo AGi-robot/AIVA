@@ -47,7 +47,11 @@ class AivaChat(Node):
         )
         self.declare_parameter("system_prompt", _load_soul())
         self.declare_parameter("agi_home", os.getenv("AGI_HOME", "~/.agi"))
-        self.declare_parameter("database_url", os.getenv("AIVA_DATABASE_URL", ""))
+        default_memory_path = (
+            Path(str(self.get_parameter("agi_home").value)).expanduser()
+            / "profile" / "grace_memory.sqlite3"
+        )
+        self.declare_parameter("memory_path", os.getenv("AIVA_MEMORY_PATH", str(default_memory_path)))
         self.declare_parameter("memory_turns", 8)
         self._base_url = str(self.get_parameter("llm_base_url").value).rstrip("/")
         self._model = str(self.get_parameter("llm_model").value)
@@ -60,8 +64,8 @@ class AivaChat(Node):
             self.get_logger().warning(f"User profile unavailable at {profile_path}: {error}")
         if user_profile:
             self._system_prompt += f"\n\nUser profile (trusted context; do not invent beyond it):\n{user_profile}"
-        database_url = str(self.get_parameter("database_url").value)
-        self._memory = GraceMemory(database_url, int(self.get_parameter("memory_turns").value))
+        memory_path = str(self.get_parameter("memory_path").value)
+        self._memory = GraceMemory(memory_path, int(self.get_parameter("memory_turns").value))
         self._cryptic = CrypticSignalCore()
         self._api_key = os.getenv("AIVA_LLM_API_KEY", "")
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aiva-llm")

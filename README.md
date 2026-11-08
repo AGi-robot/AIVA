@@ -42,15 +42,10 @@ Chat runs in the separate `aiva_chat` ROS package, not in SCS. It decodes
 `/telepathic/stimulus`, sends recent turns to an OpenAI-compatible chat API,
 and publishes `start` / `delta` / `done` response events on
 `/tms/text_response`, which the WebUI already displays. Recent turns persist
-in PostgreSQL without deleting older turns. Each message has a stable row ID,
-conversation ID, exchange ID, role, timestamp, and JSON metadata; old rows are
-kept and attached to Grace's default conversation during the additive schema
-migration. This preserves the original text as the source of truth and gives a
-future embedding/indexing job clear message and conversation boundaries. The
-node sends only the latest 8 exchanges to the LLM as active context. Older
-messages are not semantically recalled yet; vector search is not enabled.
-PostgreSQL also creates basic document and chunk tables for a future
-knowledge-base ingester.
+in SQLite at `~/.agi/profile/grace_memory.sqlite3` by default. The path follows
+the `agi_home` parameter and can be overridden with `AIVA_MEMORY_PATH`. The
+node sends the latest 8 exchanges to the LLM as active context; older turns
+remain stored but are not semantically recalled yet.
 
 For a local Ollama server, set `AIVA_LLM_BASE_URL` and `AIVA_LLM_MODEL` if your
 model or address differs from the defaults. Start Ollama, rosbridge, the AIVA
@@ -82,12 +77,6 @@ input signal there, and the browser receives responses through its WebSocket
 proxy. The default LLM endpoint is `http://127.0.0.1:11434/v1` and default
 model is `hf.co/unsloth/Ministral-3-14B-Instruct-2512-GGUF:UD-Q4_K_XL`. For an authenticated endpoint, set `AIVA_LLM_API_KEY` in
 the environment; never put it in the ROS message or source files.
-
-Set `AIVA_DATABASE_URL` before starting the chat node, for example
-`postgresql://<db-user>:<db-password>@127.0.0.1:5432/grace`. Create a local
-`grace` database and dedicated database user once; the node creates its schema
-and tables at startup. Keep the password in local service environment
-configuration, not in source code or ROS messages.
 
 The AIVA ROS workspace can run a small heartbeat process alongside its future
 services. It lets the Web Teleops Console on AuRoRA distinguish the PC companion from the
