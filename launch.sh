@@ -35,7 +35,7 @@ if [[ ! -f "$WORKSPACE_SETUP" || "$workspace_ready" -eq 0 ]]; then
   fi
   echo "AIVA workspace is incomplete; building from $SCRIPT_DIR..."
   AIVA_ROS_PYTHON="$(command -v python3)"
-  (cd "$SCRIPT_DIR" && colcon build --symlink-install \
+  (cd "$SCRIPT_DIR" && colcon build \
     --cmake-args "-DPython3_EXECUTABLE=$AIVA_ROS_PYTHON")
 fi
 
