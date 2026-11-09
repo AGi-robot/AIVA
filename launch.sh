@@ -26,7 +26,12 @@ else
   LLM_MODEL="aiva-ministral-3-8b-ctx${LLM_NUM_CTX}"
   CREATE_CONTEXT_MODEL=1
 fi
-LLM_KEEP_ALIVE="${AIVA_LLM_KEEP_ALIVE:-30m}"
+LLM_KEEP_ALIVE="${AIVA_LLM_KEEP_ALIVE:--1}"
+if [[ "$LLM_KEEP_ALIVE" == "-1" ]]; then
+  LLM_KEEP_ALIVE_LABEL="indefinitely"
+else
+  LLM_KEEP_ALIVE_LABEL="$LLM_KEEP_ALIVE"
+fi
 PRELOAD_LLM="${AIVA_PRELOAD_LLM:-1}"
 LOG_DIR="${AIVA_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agi/aiva}"
 export AIVA_LLM_BASE_URL="$LLM_BASE_URL"
@@ -91,8 +96,8 @@ run_spinner() {
 }
 
 printf '\n%s╭──────────────────────────────────────╮\n' "$C_MAGENTA"
-printf '│  %s✦ AIVA%s  %sGrace companion startup%s       │\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
-printf '│  %sROS 2%s  ·  %sOllama%s  ·  %sWebUI%s            │\n' "$C_CYAN" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_MAGENTA" "$C_RESET"
+printf '│  %s✦ AIVA%s  %sGrace companion startup%s     │\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
+printf '│  %sROS 2%s  ·  %sOllama%s  ·  %sWebUI%s          │\n' "$C_CYAN" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_MAGENTA" "$C_RESET"
 printf '╰──────────────────────────────────────╯%s\n\n' "$C_RESET"
 
 if [[ ! -f "$ROS_SETUP" ]]; then
@@ -213,9 +218,9 @@ fi
 if [[ "$START_CHAT" == "1" && "$PRELOAD_LLM" != "0" ]]; then
   stage "02 / 04" "Warm up Grace's language model"
   if [[ "$CREATE_CONTEXT_MODEL" == "1" && ( "$LLM_BASE_URL" == "http://127.0.0.1:11434/v1" || "$LLM_BASE_URL" == "http://localhost:11434/v1" ) ]]; then
-    info "Model: $LLM_MODEL  ${C_DIM}· context: $LLM_NUM_CTX · keep alive: $LLM_KEEP_ALIVE${C_RESET}"
+    info "Model: $LLM_MODEL  ${C_DIM}· context: $LLM_NUM_CTX · keep alive: $LLM_KEEP_ALIVE_LABEL${C_RESET}"
   else
-    info "Model: $LLM_MODEL  ${C_DIM}· keep alive: $LLM_KEEP_ALIVE${C_RESET}"
+    info "Model: $LLM_MODEL  ${C_DIM}· keep alive: $LLM_KEEP_ALIVE_LABEL${C_RESET}"
   fi
   preload_llm() {
     "$AIVA_ROS_PYTHON" - "$LLM_BASE_URL" "$LLM_MODEL" "$LLM_KEEP_ALIVE" <<'PY'
