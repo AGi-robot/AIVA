@@ -11,7 +11,13 @@ WEBUI_HOST="${AGI_WEB_TELEOPS_CONSOLE_HOST:-127.0.0.1}"
 WEBUI_PORT="${AGI_WEB_TELEOPS_CONSOLE_PORT:-8853}"
 WEBUI_URL="${AIVA_WEBUI_URL:-http://${WEBUI_HOST}:${WEBUI_PORT}}"
 START_CHAT="${AIVA_START_CHAT:-1}"
+LLM_BASE_URL="${AIVA_LLM_BASE_URL:-http://127.0.0.1:11434/v1}"
+LLM_MODEL="${AIVA_LLM_MODEL:-hf.co/unsloth/Ministral-3-14B-Instruct-2512-GGUF:UD-Q4_K_XL}"
+LLM_KEEP_ALIVE="${AIVA_LLM_KEEP_ALIVE:-30m}"
+PRELOAD_LLM="${AIVA_PRELOAD_LLM:-1}"
 LOG_DIR="${AIVA_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agi/aiva}"
+export AIVA_LLM_BASE_URL="$LLM_BASE_URL"
+export AIVA_LLM_MODEL="$LLM_MODEL"
 
 if [[ ! -f "$ROS_SETUP" ]]; then
   echo "ROS setup not found: $ROS_SETUP" >&2
@@ -107,6 +113,55 @@ then
   echo "A ROS bridge is already using port 9090. Check it with: sudo ss -ltnp 'sport = :9090'" >&2
   echo "Stop the stale AIVA launch before starting another one; do not start duplicate AIVA chat nodes." >&2
   exit 1
+fi
+
+if [[ "$START_CHAT" == "1" && "$PRELOAD_LLM" != "0" ]]; then
+  echo "Preloading LLM model: $LLM_MODEL (keep alive: $LLM_KEEP_ALIVE)"
+  if ! "$AIVA_ROS_PYTHON" - "$LLM_BASE_URL" "$LLM_MODEL" "$LLM_KEEP_ALIVE" <<'PY'
+import json
+import sys
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
+
+base_url, model, keep_alive = sys.argv[1:]
+parsed = urlsplit(base_url)
+if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or parsed.port != 11434:
+    print("Skipping preload: the configured LLM endpoint is not local Ollama on port 11434.")
+    raise SystemExit(0)
+
+origin = f"{parsed.scheme}://{parsed.netloc}"
+request = Request(
+    f"{origin}/api/generate",
+    data=json.dumps({"model": model, "keep_alive": keep_alive, "stream": False}).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+deadline = time.monotonic() + 30
+while True:
+    try:
+        with urlopen(request, timeout=300) as response:
+            result = json.load(response)
+        if result.get("error"):
+            print(f"Ollama preload failed: {result['error']}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"LLM ready: {result.get('model', model)}")
+        break
+    except HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        print(f"Ollama preload failed (HTTP {error.code}): {detail}", file=sys.stderr)
+        raise SystemExit(1)
+    except (URLError, TimeoutError, OSError) as error:
+        if time.monotonic() >= deadline:
+            print(f"Could not preload Ollama model from {origin}: {error}", file=sys.stderr)
+            raise SystemExit(1)
+        time.sleep(0.5)
+PY
+  then
+    echo "Set AIVA_PRELOAD_LLM=0 to skip model preloading." >&2
+    exit 1
+  fi
 fi
 
 pids=()

@@ -56,8 +56,13 @@ node sends the latest 8 exchanges to the LLM as active context; older turns
 remain stored but are not semantically recalled yet.
 
 For a local Ollama server, set `AIVA_LLM_BASE_URL` and `AIVA_LLM_MODEL` if your
-model or address differs from the defaults. Start Ollama, rosbridge, the AIVA
-WebUI server, and the chat node. Build the AIVA packages from this workspace:
+model or address differs from the defaults. `./launch.sh` preloads the configured
+local Ollama model before starting AIVA chat, then keeps it loaded for 30 minutes
+after its last request. Set `AIVA_LLM_KEEP_ALIVE=-1` to keep it loaded
+indefinitely, or `AIVA_PRELOAD_LLM=0` to disable preloading. Preloading is skipped
+for non-local, non-Ollama-compatible endpoints.
+
+Build the AIVA packages from this workspace:
 
 ```sh
 cd ~/AGi/AIVA
@@ -66,7 +71,7 @@ colcon build --packages-select cryptic_signal_core aiva_chat telepathic_manageme
 source install/setup.bash
 ```
 
-Start Ollama (or another compatible server) and load a model first. Then open
+To run services manually, start Ollama (or another compatible server), then open
 separate terminals, source `AIVA/install/setup.bash` in each, and run:
 
 ```sh
