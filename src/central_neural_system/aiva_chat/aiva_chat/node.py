@@ -39,6 +39,7 @@ class AivaChat(Node):
     def __init__(self) -> None:
         super().__init__("aiva_chat")
         self.declare_parameter("input_topic", "/telepathic/stimulus")
+        self.declare_parameter("webui_input_topic", "/aiva/chat_input")
         self.declare_parameter("response_topic", "/tms/text_response")
         self.declare_parameter("llm_base_url", os.getenv("AIVA_LLM_BASE_URL", "http://127.0.0.1:11434/v1"))
         self.declare_parameter(
@@ -78,10 +79,40 @@ class AivaChat(Node):
             self._on_signal,
             10,
         )
+        self._webui_input_sub = self.create_subscription(
+            String,
+            str(self.get_parameter("webui_input_topic").value),
+            self._on_webui_input,
+            10,
+        )
         self.get_logger().info(
             f"AIVA chat listening on {self.get_parameter('input_topic').value}; "
             f"LLM={self._base_url} model={self._model}"
         )
+
+    def _submit_prompt(self, text: str, identifier: str = "") -> None:
+        text = text.strip()
+        if not text:
+            self.get_logger().warning("Received an empty chat message")
+            return
+        self.get_logger().info(
+            f"Received chat message ({len(text)} characters, id={identifier}); sending to LLM"
+        )
+        self._pool.submit(self._answer, text, identifier)
+
+    def _on_webui_input(self, message: String) -> None:
+        """Accept plain WebUI chat over the browser's persistent rosbridge connection."""
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, json.JSONDecodeError):
+            payload = {"text": message.data}
+        if not isinstance(payload, dict):
+            self.get_logger().warning("Ignoring malformed WebUI chat payload")
+            return
+        text = str(payload.get("text", ""))
+        if payload.get("web_search"):
+            text = f"/web {text}"
+        self._submit_prompt(text, str(payload.get("identifier", "")))
 
     def _on_signal(self, signal: TelepathicSignal) -> None:
         self.get_logger().info(
@@ -99,13 +130,7 @@ class AivaChat(Node):
         except (TypeError, ValueError) as error:
             self.get_logger().warning(f"Ignoring invalid TelepathicSignal: {error}")
             return
-        if not text:
-            self.get_logger().warning("Received an empty decoded chat message")
-            return
-        self.get_logger().info(
-            f"Received chat message ({len(text)} characters, id={signal.identifier}); sending to LLM"
-        )
-        self._pool.submit(self._answer, text, signal.identifier)
+        self._submit_prompt(text, signal.identifier)
 
     def _publish(self, event: dict[str, str]) -> None:
         message = String()
