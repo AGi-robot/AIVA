@@ -132,8 +132,36 @@ fi
 start_service webui ros2 run telepathic_management telepathic_console
 
 echo "Opening AIVA WebUI at $WEBUI_URL"
+echo "Waiting for the WebUI to become ready..."
+webui_ready=0
+for attempt in {1..60}; do
+  if "$AIVA_ROS_PYTHON" - "$WEBUI_URL" <<'PY'
+import sys
+import urllib.request
+
+try:
+    with urllib.request.urlopen(sys.argv[1], timeout=1) as response:
+        raise SystemExit(0 if response.status < 500 else 1)
+except Exception:
+    raise SystemExit(1)
+PY
+  then
+    webui_ready=1
+    break
+  fi
+  sleep 0.5
+done
+
+if [[ "$webui_ready" != "1" ]]; then
+  echo "WebUI did not become ready at $WEBUI_URL; check $LOG_DIR/webui.log." >&2
+  exit 1
+fi
+
 if command -v xdg-open >/dev/null 2>&1; then
+  echo "WebUI is ready; opening browser."
   xdg-open "$WEBUI_URL" >/dev/null 2>&1 &
+else
+  echo "WebUI is ready at $WEBUI_URL (xdg-open is unavailable)."
 fi
 echo "Services are running. Press Ctrl+C to stop them. Set AIVA_START_CHAT=0 to skip chat."
 
