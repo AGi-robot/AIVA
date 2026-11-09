@@ -68,12 +68,14 @@ fi
 mkdir -p "$LOG_DIR"
 
 pids=()
+service_names=()
 start_service() {
   local name="$1"
   shift
   echo "Starting $name (log: $LOG_DIR/$name.log)"
   "$@" >"$LOG_DIR/$name.log" 2>&1 &
   pids+=("$!")
+  service_names+=("$name")
 }
 
 cleanup() {
@@ -99,7 +101,23 @@ if command -v xdg-open >/dev/null 2>&1; then
 fi
 echo "Services are running. Press Ctrl+C to stop them. Set AIVA_START_CHAT=0 to skip chat."
 
-wait -n "${pids[@]}"
-status=$?
-echo "A service exited (status $status). See logs in $LOG_DIR." >&2
+if wait -n "${pids[@]}"; then
+  status=0
+else
+  status=$?
+fi
+
+failed_service=""
+for index in "${!pids[@]}"; do
+  if ! kill -0 "${pids[$index]}" 2>/dev/null; then
+    failed_service="${service_names[$index]}"
+    break
+  fi
+done
+if [[ -n "$failed_service" ]]; then
+  echo "Service '$failed_service' exited (status $status)." >&2
+else
+  echo "A service exited (status $status)." >&2
+fi
+echo "Check service logs in $LOG_DIR." >&2
 exit "$status"
