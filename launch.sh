@@ -19,9 +19,72 @@ LOG_DIR="${AIVA_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agi/aiva}"
 export AIVA_LLM_BASE_URL="$LLM_BASE_URL"
 export AIVA_LLM_MODEL="$LLM_MODEL"
 
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+  C_RESET=$'\033[0m'
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
+  C_CYAN=$'\033[36m'
+  C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m'
+  C_MAGENTA=$'\033[35m'
+else
+  C_RESET=''
+  C_BOLD=''
+  C_DIM=''
+  C_CYAN=''
+  C_GREEN=''
+  C_YELLOW=''
+  C_RED=''
+  C_MAGENTA=''
+fi
+
+info() { printf '%s\n' "${C_CYAN}•${C_RESET} $*"; }
+success() { printf '%s\n' "${C_GREEN}✓${C_RESET} $*"; }
+warn() { printf '%s\n' "${C_YELLOW}!${C_RESET} $*" >&2; }
+error() { printf '%s\n' "${C_RED}✗${C_RESET} $*" >&2; }
+stage() { printf '\n%s%s%s  %s\n' "$C_MAGENTA" "$1" "$C_RESET" "$2"; }
+
+run_spinner() {
+  local label="$1" logfile="$2" status=0 pid index elapsed started=$SECONDS timer
+  shift 2
+  if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    "$@" >"$logfile" 2>&1 &
+    pid=$!
+    index=0
+    while kill -0 "$pid" 2>/dev/null; do
+      elapsed=$((SECONDS - started))
+      printf -v timer '%02d:%02d' "$((elapsed / 60))" "$((elapsed % 60))"
+      printf '\r\033[2K%s%s%s  %s %s' "$C_CYAN" "${frames[$((index % ${#frames[@]}))]}" "$C_RESET" "$label" "${C_DIM}[$timer]${C_RESET}"
+      index=$((index + 1))
+      sleep 0.1
+    done
+    wait "$pid" || status=$?
+    printf '\r\033[2K'
+  else
+    info "$label (details: $logfile)"
+    "$@" >"$logfile" 2>&1 || status=$?
+  fi
+
+  if [[ "$status" == "0" ]]; then
+    elapsed=$((SECONDS - started))
+    success "$label (${elapsed}s)"
+    return 0
+  fi
+  error "$label failed (exit $status). Details: $logfile"
+  tail -n 20 "$logfile" >&2 || true
+  return "$status"
+}
+
+printf '\n%s╭──────────────────────────────────────╮\n' "$C_MAGENTA"
+printf '│  %s✦ AIVA%s  %sGrace companion startup%s       │\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
+printf '│  %sROS 2%s  ·  %sOllama%s  ·  %sWebUI%s            │\n' "$C_CYAN" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_MAGENTA" "$C_RESET"
+printf '╰──────────────────────────────────────╯%s\n\n' "$C_RESET"
+
 if [[ ! -f "$ROS_SETUP" ]]; then
-  echo "ROS setup not found: $ROS_SETUP" >&2
-  echo "Set ROS_SETUP to your ROS 2 setup.bash path." >&2
+  error "ROS setup not found: $ROS_SETUP"
+  info "Set ROS_SETUP to your ROS 2 setup.bash path."
   exit 1
 fi
 set +u
@@ -29,38 +92,41 @@ source "$ROS_SETUP"
 set -u
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-  echo "AIVA Python venv not found: $VENV_DIR" >&2
-  echo "Create it and install dependencies with:" >&2
-  echo "  cd '$SCRIPT_DIR'" >&2
-  echo "  /usr/bin/python3 -m venv --system-site-packages .venv" >&2
-  echo "  .venv/bin/python -m pip install -r requirements.txt" >&2
+  error "AIVA Python venv not found: $VENV_DIR"
+  info "Create it and install dependencies with:"
+  printf '  cd %q\n  /usr/bin/python3 -m venv --system-site-packages .venv\n  .venv/bin/python -m pip install -r requirements.txt\n' "$SCRIPT_DIR"
   exit 1
 fi
 export VIRTUAL_ENV="$VENV_DIR"
 export PATH="$VENV_DIR/bin:$PATH"
 AIVA_ROS_PYTHON="$VENV_DIR/bin/python"
 if ! "$AIVA_ROS_PYTHON" -c 'import rclpy, httpx' >/dev/null 2>&1; then
-  echo "The AIVA venv cannot import ROS 2 Python modules or httpx." >&2
-  echo "Recreate it with --system-site-packages, then install requirements.txt." >&2
+  error "The AIVA venv cannot import ROS 2 Python modules or httpx."
+  info "Recreate it with --system-site-packages, then install requirements.txt."
   exit 1
 fi
 
 if ! command -v colcon >/dev/null 2>&1; then
-  echo "colcon is unavailable; cannot build the AIVA workspace." >&2
+  error "colcon is unavailable; cannot build the AIVA workspace."
   exit 1
 fi
-echo "Building AIVA workspace from $SCRIPT_DIR..."
-(cd "$SCRIPT_DIR" && colcon build \
-  --cmake-args "-DPython3_EXECUTABLE=$AIVA_ROS_PYTHON")
+mkdir -p "$LOG_DIR"
+stage "01 / 04" "Build workspace"
+build_workspace() {
+  (cd "$SCRIPT_DIR" && colcon build --cmake-args "-DPython3_EXECUTABLE=$AIVA_ROS_PYTHON")
+}
+if ! run_spinner "Building ROS 2 packages" "$LOG_DIR/build.log" build_workspace; then
+  exit 1
+fi
 
 if [[ ! -f "$WORKSPACE_SETUP" ]]; then
-  echo "Workspace build completed without creating $WORKSPACE_SETUP." >&2
+  error "Workspace build did not create $WORKSPACE_SETUP."
   exit 1
 fi
 
 for package in "${WORKSPACE_PACKAGES[@]}"; do
   if [[ ! -f "$SCRIPT_DIR/install/$package/share/ament_index/resource_index/packages/$package" ]]; then
-    echo "Workspace build did not install required package: $package" >&2
+    error "Workspace build did not install required package: $package"
     exit 1
   fi
 done
@@ -69,11 +135,10 @@ set +u
 source "$WORKSPACE_SETUP"
 set -u
 if ! ros2 pkg prefix rosbridge_server >/dev/null 2>&1; then
-  echo "ROS package rosbridge_server is missing; install it with:" >&2
-  echo "  sudo apt install ros-jazzy-rosbridge-server" >&2
+  error "ROS package rosbridge_server is missing."
+  info "Install it with: sudo apt install ros-jazzy-rosbridge-server"
   exit 1
 fi
-mkdir -p "$LOG_DIR"
 
 # Catch an orphaned WebUI from an older launch before bringing up rosbridge/chat.
 if ! "$AIVA_ROS_PYTHON" - "$WEBUI_HOST" "$WEBUI_PORT" <<'PY'
@@ -89,9 +154,9 @@ except OSError as error:
     raise SystemExit(1)
 PY
 then
-  echo "Find the listener with: sudo ss -ltnp 'sport = :$WEBUI_PORT'" >&2
-  echo "Check its command with: ps -fp <PID> (replace <PID> with the ss process ID)." >&2
-  echo "Stop only the stale AIVA WebUI process, then run ./launch.sh again." >&2
+  info "Find the listener with: sudo ss -ltnp 'sport = :$WEBUI_PORT'"
+  info "Check its command with: ps -fp <PID> (replace <PID> with the ss process ID)."
+  error "Stop only the stale AIVA WebUI process, then run ./launch.sh again."
   exit 1
 fi
 
@@ -110,14 +175,17 @@ except OSError as error:
     raise SystemExit(1)
 PY
 then
-  echo "A ROS bridge is already using port 9090. Check it with: sudo ss -ltnp 'sport = :9090'" >&2
-  echo "Stop the stale AIVA launch before starting another one; do not start duplicate AIVA chat nodes." >&2
+  error "A ROS bridge is already using port 9090."
+  info "Find it with: sudo ss -ltnp 'sport = :9090'"
+  info "Stop the stale AIVA launch before starting another one."
   exit 1
 fi
 
 if [[ "$START_CHAT" == "1" && "$PRELOAD_LLM" != "0" ]]; then
-  echo "Preloading LLM model: $LLM_MODEL (keep alive: $LLM_KEEP_ALIVE)"
-  if ! "$AIVA_ROS_PYTHON" - "$LLM_BASE_URL" "$LLM_MODEL" "$LLM_KEEP_ALIVE" <<'PY'
+  stage "02 / 04" "Warm up Grace's language model"
+  info "Model: $LLM_MODEL  ${C_DIM}· keep alive: $LLM_KEEP_ALIVE${C_RESET}"
+  preload_llm() {
+    "$AIVA_ROS_PYTHON" - "$LLM_BASE_URL" "$LLM_MODEL" "$LLM_KEEP_ALIVE" <<'PY'
 import json
 import sys
 import time
@@ -158,10 +226,14 @@ while True:
             raise SystemExit(1)
         time.sleep(0.5)
 PY
-  then
-    echo "Set AIVA_PRELOAD_LLM=0 to skip model preloading." >&2
+  }
+  if ! run_spinner "Loading model into Ollama" "$LOG_DIR/llm-preload.log" preload_llm; then
+    error "Set AIVA_PRELOAD_LLM=0 to skip model preloading."
     exit 1
   fi
+elif [[ "$START_CHAT" == "1" ]]; then
+  stage "02 / 04" "Warm up Grace's language model"
+  warn "Preloading disabled (AIVA_PRELOAD_LLM=0)."
 fi
 
 pids=()
@@ -170,7 +242,7 @@ service_has_session=()
 start_service() {
   local name="$1"
   shift
-  echo "Starting $name (log: $LOG_DIR/$name.log)"
+  info "Starting $name  ${C_DIM}· log: $LOG_DIR/$name.log${C_RESET}"
   if command -v setsid >/dev/null 2>&1; then
     setsid -- "$@" >"$LOG_DIR/$name.log" 2>&1 &
     service_has_session+=(1)
@@ -235,10 +307,10 @@ except OSError:
     raise SystemExit(1)
 PY
   then
-    echo "Warning: $WEBUI_HOST:$WEBUI_PORT is still occupied after stopping AIVA services." >&2
-    echo "Check the remaining listener with: sudo ss -ltnp 'sport = :$WEBUI_PORT'" >&2
+    warn "$WEBUI_HOST:$WEBUI_PORT is still occupied after stopping AIVA services."
+    info "Check the remaining listener with: sudo ss -ltnp 'sport = :$WEBUI_PORT'"
   else
-    echo "AIVA services stopped; port $WEBUI_PORT is free."
+    success "AIVA services stopped; port $WEBUI_PORT is free."
   fi
 }
 handle_signal() {
@@ -253,45 +325,48 @@ trap cleanup EXIT
 trap 'handle_signal INT' INT
 trap 'handle_signal TERM' TERM
 
+stage "03 / 04" "Start AIVA services"
 start_service rosbridge ros2 launch rosbridge_server rosbridge_websocket_launch.xml address:=127.0.0.1
 if [[ "$START_CHAT" == "1" ]]; then
   start_service aiva-chat ros2 run aiva_chat aiva_chat
 fi
 start_service webui ros2 run telepathic_management telepathic_console
 
-echo "Opening AIVA WebUI at $WEBUI_URL"
-echo "Waiting for the WebUI to become ready..."
-webui_ready=0
-for attempt in {1..60}; do
-  if "$AIVA_ROS_PYTHON" - "$WEBUI_URL" <<'PY'
+stage "04 / 04" "Connect the WebUI"
+wait_for_webui() {
+  "$AIVA_ROS_PYTHON" - "$WEBUI_URL" <<'PY'
 import sys
+import time
 import urllib.request
 
-try:
-    with urllib.request.urlopen(sys.argv[1], timeout=1) as response:
-        raise SystemExit(0 if response.status < 500 else 1)
-except Exception:
-    raise SystemExit(1)
+deadline = time.monotonic() + 30
+last_error = None
+while time.monotonic() < deadline:
+    try:
+        with urllib.request.urlopen(sys.argv[1], timeout=1) as response:
+            if response.status < 500:
+                raise SystemExit(0)
+    except Exception as error:
+        last_error = error
+    time.sleep(0.5)
+print(f"WebUI did not become ready: {last_error}", file=sys.stderr)
+raise SystemExit(1)
 PY
-  then
-    webui_ready=1
-    break
-  fi
-  sleep 0.5
-done
-
-if [[ "$webui_ready" != "1" ]]; then
-  echo "WebUI did not become ready at $WEBUI_URL; check $LOG_DIR/webui.log." >&2
+}
+if ! run_spinner "Waiting for the WebUI at $WEBUI_URL" "$LOG_DIR/webui-ready.log" wait_for_webui; then
+  error "Check the WebUI log at $LOG_DIR/webui.log."
   exit 1
 fi
 
 if command -v xdg-open >/dev/null 2>&1; then
-  echo "WebUI is ready; opening browser."
+  success "WebUI is ready; opening browser."
   xdg-open "$WEBUI_URL" >/dev/null 2>&1 &
 else
-  echo "WebUI is ready at $WEBUI_URL (xdg-open is unavailable)."
+  success "WebUI is ready at $WEBUI_URL (xdg-open is unavailable)."
 fi
-echo "Services are running. Press Ctrl+C to stop them. Set AIVA_START_CHAT=0 to skip chat."
+printf '\n%s%sAIVA is ready%s\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
+info "Open $WEBUI_URL"
+info "Press Ctrl+C to stop services. Set AIVA_START_CHAT=0 to skip chat."
 
 if wait -n "${pids[@]}"; then
   status=0
@@ -307,9 +382,9 @@ for index in "${!pids[@]}"; do
   fi
 done
 if [[ -n "$failed_service" ]]; then
-  echo "Service '$failed_service' exited (status $status)." >&2
+  error "Service '$failed_service' exited (status $status)."
 else
-  echo "A service exited (status $status)." >&2
+  error "A service exited (status $status)."
 fi
-echo "Check service logs in $LOG_DIR." >&2
+info "Check service logs in $LOG_DIR."
 exit "$status"
