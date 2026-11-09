@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -Eeuo pipefail                                                                                            # flag errors as fatal before reaching AGi system
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(dirname -- "$SCRIPT_DIR")"
-ROS_SETUP="${ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
-VENV_DIR="${AIVA_VENV:-$SCRIPT_DIR/.venv}"
-WORKSPACE_SETUP="$SCRIPT_DIR/install/setup.bash"
-WORKSPACE_PACKAGES=(aiva_chat cryptic_signal_core scs telepathic_management)
+# define AGi system paths
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"                                              # capture where user launch the AGi system
+REPO_DIR="$(dirname -- "$SCRIPT_DIR")"                                                                        # capture the repository location of AGi system (one level up from the launch file)
+VENV_DIR="${AIVA_VENV:-$SCRIPT_DIR/.venv}"                                                                    # define the virtual environment for the AGi system to run on
+
+# define ROS setup and workspace path
+ROS_SETUP="${ROS_SETUP:-/opt/ros/jazzy/setup.bash}"                                                           # define the robotic middleware for the entire system
+WORKSPACE_SETUP="$SCRIPT_DIR/install/setup.bash"                                                              # define the robotic middleware to setup the AGi system
+WORKSPACE_PACKAGES=(aiva_chat cryptic_signal_core scs telepathic_management)                                  # 
+
 WEBUI_HOST="${AGI_WEB_TELEOPS_CONSOLE_HOST:-127.0.0.1}"
 WEBUI_PORT="${AGI_WEB_TELEOPS_CONSOLE_PORT:-8853}"
 WEBUI_URL="${AIVA_WEBUI_URL:-http://${WEBUI_HOST}:${WEBUI_PORT}}"
