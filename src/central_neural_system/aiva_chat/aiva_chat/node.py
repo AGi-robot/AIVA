@@ -43,7 +43,7 @@ class AivaChat(Node):
         self.declare_parameter("llm_base_url", os.getenv("AIVA_LLM_BASE_URL", "http://127.0.0.1:11434/v1"))
         self.declare_parameter(
             "llm_model",
-            os.getenv("AIVA_LLM_MODEL", "hf.co/unsloth/Ministral-3-14B-Instruct-2512-GGUF:UD-Q4_K_XL"),
+            os.getenv("AIVA_LLM_MODEL", "hf.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF:UD-Q4_K_XL"),
         )
         self.declare_parameter("system_prompt", _load_soul())
         self.declare_parameter("agi_home", os.getenv("AGI_HOME", "~/.agi"))
