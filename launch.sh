@@ -17,9 +17,11 @@ ROS_SETUP="${ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
 WORKSPACE_SETUP="$SCRIPT_DIR/install/setup.bash"
 # (WORKSPACE_PACKAGES is detected after ROS is sourced; see the build section)
 
-WEBUI_HOST="${TELEPATHIC_CONSOLE_HOST:-127.0.0.1}"
-WEBUI_PORT="${TELEPATHIC_CONSOLE_PORTAL:-8853}"
-WEBUI_URL="${TELEPATHIC_GATEWAY:-http://${WEBUI_HOST}:${WEBUI_PORT}}"
+# --- Telepathic Console ------------------------------------------------------
+TELEPATHIC_CONSOLE_HOST="${TELEPATHIC_CONSOLE_HOST:-127.0.0.1}"
+TELEPATHIC_CONSOLE_PORTAL="${TELEPATHIC_CONSOLE_PORTAL:-8853}"
+TELEPATHIC_GATEWAY="${TELEPATHIC_GATEWAY:-http://${TELEPATHIC_CONSOLE_HOST}:${TELEPATHIC_CONSOLE_PORTAL}}"
+
 START_CHAT="${AIVA_START_CHAT:-1}"
 LLM_BASE_URL="${AIVA_LLM_BASE_URL:-http://127.0.0.1:11434/v1}"
 LLM_NUM_CTX="${AIVA_LLM_NUM_CTX:-25600}"
@@ -178,7 +180,7 @@ if ! ros2 pkg prefix rosbridge_server >/dev/null 2>&1; then
 fi
 
 # Catch an orphaned WebUI from an older launch before bringing up rosbridge/chat.
-if ! "$AIVA_ROS_PYTHON" - "$WEBUI_HOST" "$WEBUI_PORT" <<'PY'
+if ! "$AIVA_ROS_PYTHON" - "$TELEPATHIC_CONSOLE_HOST" "$TELEPATHIC_CONSOLE_PORTAL" <<'PY'
 import socket
 import sys
 
@@ -191,7 +193,7 @@ except OSError as error:
     raise SystemExit(1)
 PY
 then
-  info "Find the listener with: sudo ss -ltnp 'sport = :$WEBUI_PORT'"
+  info "Find the listener with: sudo ss -ltnp 'sport = :$TELEPATHIC_CONSOLE_PORTAL'"
   info "Check its command with: ps -fp <PID> (replace <PID> with the ss process ID)."
   error "Stop only the stale AIVA WebUI process, then run ./launch.sh again."
   exit 1
@@ -353,7 +355,7 @@ cleanup() {
   done
 
   # Confirm the listener has released the configured WebUI address.
-  if ! "$AIVA_ROS_PYTHON" - "$WEBUI_HOST" "$WEBUI_PORT" <<'PY'
+  if ! "$AIVA_ROS_PYTHON" - "$TELEPATHIC_CONSOLE_HOST" "$TELEPATHIC_CONSOLE_PORTAL" <<'PY'
 import socket
 import sys
 
@@ -364,10 +366,10 @@ except OSError:
     raise SystemExit(1)
 PY
   then
-    warn "$WEBUI_HOST:$WEBUI_PORT is still occupied after stopping AIVA services."
-    info "Check the remaining listener with: sudo ss -ltnp 'sport = :$WEBUI_PORT'"
+    warn "$TELEPATHIC_CONSOLE_HOST:$TELEPATHIC_CONSOLE_PORTAL is still occupied after stopping AIVA services."
+    info "Check the remaining listener with: sudo ss -ltnp 'sport = :$TELEPATHIC_CONSOLE_PORTAL'"
   else
-    success "AIVA services stopped; port $WEBUI_PORT is free."
+    success "AIVA services stopped; port $TELEPATHIC_CONSOLE_PORTAL is free."
   fi
 }
 handle_signal() {
@@ -391,7 +393,7 @@ start_service webui ros2 run telepathic_management telepathic_console
 
 stage "04 / 04" "Connect the WebUI"
 wait_for_webui() {
-  "$AIVA_ROS_PYTHON" - "$WEBUI_URL" <<'PY'
+  "$AIVA_ROS_PYTHON" - "$TELEPATHIC_GATEWAY" <<'PY'
 import sys
 import time
 import urllib.request
@@ -410,19 +412,19 @@ print(f"WebUI did not become ready: {last_error}", file=sys.stderr)
 raise SystemExit(1)
 PY
 }
-if ! run_spinner "Waiting for the WebUI at $WEBUI_URL" "$LOG_DIR/webui-ready.log" wait_for_webui; then
+if ! run_spinner "Waiting for the WebUI at $TELEPATHIC_GATEWAY" "$LOG_DIR/webui-ready.log" wait_for_webui; then
   error "Check the WebUI log at $LOG_DIR/webui.log."
   exit 1
 fi
 
 if command -v xdg-open >/dev/null 2>&1; then
   success "WebUI is ready; opening browser."
-  xdg-open "$WEBUI_URL" >/dev/null 2>&1 &
+  xdg-open "$TELEPATHIC_GATEWAY" >/dev/null 2>&1 &
 else
-  success "WebUI is ready at $WEBUI_URL (xdg-open is unavailable)."
+  success "WebUI is ready at $TELEPATHIC_GATEWAY (xdg-open is unavailable)."
 fi
 printf '\n%s%sAIVA is ready%s\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
-info "Open $WEBUI_URL"
+info "Open $TELEPATHIC_GATEWAY"
 info "Press Ctrl+C to stop services. Set AIVA_START_CHAT=0 to skip chat."
 
 if wait -n "${pids[@]}"; then
