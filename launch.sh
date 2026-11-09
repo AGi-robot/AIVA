@@ -14,10 +14,17 @@ START_CHAT="${AIVA_START_CHAT:-1}"
 LLM_BASE_URL="${AIVA_LLM_BASE_URL:-http://127.0.0.1:11434/v1}"
 LLM_NUM_CTX="${AIVA_LLM_NUM_CTX:-25600}"
 LLM_SOURCE_MODEL="${AIVA_LLM_SOURCE_MODEL:-hf.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF:UD-Q4_K_XL}"
+CREATE_CONTEXT_MODEL=0
 if [[ -n "${AIVA_LLM_MODEL:-}" ]]; then
   LLM_MODEL="$AIVA_LLM_MODEL"
+  # The generated context wrapper can also be selected explicitly. Treat it
+  # as a wrapper to create, rather than assuming it already exists in Ollama.
+  if [[ "$LLM_MODEL" == "aiva-ministral-3-8b-ctx${LLM_NUM_CTX}" ]]; then
+    CREATE_CONTEXT_MODEL=1
+  fi
 else
   LLM_MODEL="aiva-ministral-3-8b-ctx${LLM_NUM_CTX}"
+  CREATE_CONTEXT_MODEL=1
 fi
 LLM_KEEP_ALIVE="${AIVA_LLM_KEEP_ALIVE:-30m}"
 PRELOAD_LLM="${AIVA_PRELOAD_LLM:-1}"
@@ -187,7 +194,7 @@ then
   exit 1
 fi
 
-if [[ "$START_CHAT" == "1" && -z "${AIVA_LLM_MODEL:-}" && ( "$LLM_BASE_URL" == "http://127.0.0.1:11434/v1" || "$LLM_BASE_URL" == "http://localhost:11434/v1" ) ]]; then
+if [[ "$START_CHAT" == "1" && "$CREATE_CONTEXT_MODEL" == "1" && ( "$LLM_BASE_URL" == "http://127.0.0.1:11434/v1" || "$LLM_BASE_URL" == "http://localhost:11434/v1" ) ]]; then
   create_context_model() {
     local modelfile="$LOG_DIR/Modelfile.ctx${LLM_NUM_CTX}"
     printf 'FROM %s\nPARAMETER num_ctx %s\n' "$LLM_SOURCE_MODEL" "$LLM_NUM_CTX" >"$modelfile"
@@ -205,7 +212,7 @@ fi
 
 if [[ "$START_CHAT" == "1" && "$PRELOAD_LLM" != "0" ]]; then
   stage "02 / 04" "Warm up Grace's language model"
-  if [[ -z "${AIVA_LLM_MODEL:-}" && ( "$LLM_BASE_URL" == "http://127.0.0.1:11434/v1" || "$LLM_BASE_URL" == "http://localhost:11434/v1" ) ]]; then
+  if [[ "$CREATE_CONTEXT_MODEL" == "1" && ( "$LLM_BASE_URL" == "http://127.0.0.1:11434/v1" || "$LLM_BASE_URL" == "http://localhost:11434/v1" ) ]]; then
     info "Model: $LLM_MODEL  ${C_DIM}· context: $LLM_NUM_CTX · keep alive: $LLM_KEEP_ALIVE${C_RESET}"
   else
     info "Model: $LLM_MODEL  ${C_DIM}· keep alive: $LLM_KEEP_ALIVE${C_RESET}"
