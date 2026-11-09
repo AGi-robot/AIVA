@@ -143,20 +143,36 @@ class AivaChat(Node):
             messages.extend(self._memory.recent())
             messages.append({"role": "user", "content": text})
             headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-            response = httpx.post(
+            self._publish({"type": "start", "content": ""})
+            answer_parts: list[str] = []
+            with httpx.stream(
+                "POST",
                 f"{self._base_url}/chat/completions",
-                json={"model": self._model, "messages": messages, "stream": False},
+                json={"model": self._model, "messages": messages, "stream": True},
                 headers=headers,
                 timeout=120,
-            )
-            self.get_logger().info(f"LLM request returned HTTP {response.status_code}")
-            response.raise_for_status()
-            answer = response.json()["choices"][0]["message"]["content"].strip()
+            ) as response:
+                self.get_logger().info(f"LLM streaming request returned HTTP {response.status_code}")
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(payload)
+                        chunk = event.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    except (IndexError, TypeError, json.JSONDecodeError):
+                        continue
+                    if isinstance(chunk, str) and chunk:
+                        answer_parts.append(chunk)
+                        self._publish({"type": "delta", "content": chunk})
+
+            answer = "".join(answer_parts).strip()
             if not answer:
                 raise ValueError("LLM returned an empty response")
             self._memory.add_exchange(text, answer)
-            self._publish({"type": "start", "content": ""})
-            self._publish({"type": "delta", "content": answer})
             self._publish({"type": "done", "content": "", "radio_id": identifier})
             self.get_logger().info(f"Published Grace reply (id={identifier})")
         except Exception as error:  # report provider/network failures to the chat UI
