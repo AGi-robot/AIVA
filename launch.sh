@@ -43,6 +43,11 @@ done
 set +u
 source "$WORKSPACE_SETUP"
 set -u
+if ! ros2 pkg prefix rosbridge_server >/dev/null 2>&1; then
+  echo "ROS package rosbridge_server is missing; install it with:" >&2
+  echo "  sudo apt install ros-jazzy-rosbridge-server" >&2
+  exit 1
+fi
 mkdir -p "$LOG_DIR"
 
 pids=()
