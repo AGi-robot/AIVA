@@ -92,7 +92,11 @@ class AivaChat(Node):
             self.get_logger().warning(f"Ignoring invalid TelepathicSignal: {error}")
             return
         if not text:
+            self.get_logger().warning("Received an empty decoded chat message")
             return
+        self.get_logger().info(
+            f"Received chat message ({len(text)} characters, id={signal.identifier}); sending to LLM"
+        )
         self._pool.submit(self._answer, text, signal.identifier)
 
     def _publish(self, event: dict[str, str]) -> None:
@@ -112,6 +116,7 @@ class AivaChat(Node):
                 headers=headers,
                 timeout=120,
             )
+            self.get_logger().info(f"LLM request returned HTTP {response.status_code}")
             response.raise_for_status()
             answer = response.json()["choices"][0]["message"]["content"].strip()
             if not answer:
@@ -120,6 +125,7 @@ class AivaChat(Node):
             self._publish({"type": "start", "content": ""})
             self._publish({"type": "delta", "content": answer})
             self._publish({"type": "done", "content": "", "radio_id": identifier})
+            self.get_logger().info(f"Published Grace reply (id={identifier})")
         except Exception as error:  # report provider/network failures to the chat UI
             self.get_logger().error(f"AIVA LLM request failed: {error}")
             self._publish({"type": "error", "content": f"AIVA could not reach its LLM: {error}"})
