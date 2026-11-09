@@ -89,6 +89,26 @@ then
   exit 1
 fi
 
+# AIVA's WebUI publishes into this local rosbridge. Starting a second ROS
+# graph with the same node names can make messages appear sent but never get
+# to the chat node, so fail before creating more orphaned services.
+if ! "$AIVA_ROS_PYTHON" - <<'PY'
+import socket
+import sys
+
+try:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 9090))
+except OSError as error:
+    print(f"AIVA rosbridge cannot bind to 127.0.0.1:9090: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+then
+  echo "A ROS bridge is already using port 9090. Check it with: sudo ss -ltnp 'sport = :9090'" >&2
+  echo "Stop the stale AIVA launch before starting another one; do not start duplicate AIVA chat nodes." >&2
+  exit 1
+fi
+
 pids=()
 service_names=()
 service_has_session=()
