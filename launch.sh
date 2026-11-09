@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname -- "$SCRIPT_DIR")"
 ROS_SETUP="${ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
+VENV_DIR="${AIVA_VENV:-$SCRIPT_DIR/.venv}"
 WORKSPACE_SETUP="$SCRIPT_DIR/install/setup.bash"
 WORKSPACE_PACKAGES=(aiva_chat cryptic_signal_core scs telepathic_management)
 WEBUI_URL="${AIVA_WEBUI_URL:-http://127.0.0.1:${AGI_WEB_TELEOPS_CONSOLE_PORT:-8853}}"
@@ -19,12 +20,28 @@ set +u
 source "$ROS_SETUP"
 set -u
 
+if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+  echo "AIVA Python venv not found: $VENV_DIR" >&2
+  echo "Create it and install dependencies with:" >&2
+  echo "  cd '$SCRIPT_DIR'" >&2
+  echo "  /usr/bin/python3 -m venv --system-site-packages .venv" >&2
+  echo "  .venv/bin/python -m pip install -r requirements.txt" >&2
+  exit 1
+fi
+export VIRTUAL_ENV="$VENV_DIR"
+export PATH="$VENV_DIR/bin:$PATH"
+AIVA_ROS_PYTHON="$VENV_DIR/bin/python"
+if ! "$AIVA_ROS_PYTHON" -c 'import rclpy, httpx' >/dev/null 2>&1; then
+  echo "The AIVA venv cannot import ROS 2 Python modules or httpx." >&2
+  echo "Recreate it with --system-site-packages, then install requirements.txt." >&2
+  exit 1
+fi
+
 if ! command -v colcon >/dev/null 2>&1; then
   echo "colcon is unavailable; cannot build the AIVA workspace." >&2
   exit 1
 fi
 echo "Building AIVA workspace from $SCRIPT_DIR..."
-AIVA_ROS_PYTHON="$(command -v python3)"
 (cd "$SCRIPT_DIR" && colcon build \
   --cmake-args "-DPython3_EXECUTABLE=$AIVA_ROS_PYTHON")
 
