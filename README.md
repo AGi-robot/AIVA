@@ -62,6 +62,14 @@ after its last request. Set `AIVA_LLM_KEEP_ALIVE=-1` to keep it loaded
 indefinitely, or `AIVA_PRELOAD_LLM=0` to disable preloading. Preloading is skipped
 for non-local, non-Ollama-compatible endpoints.
 
+By default, the launcher creates an Ollama wrapper model from the installed
+Ministral 3 8B Q4_K_XL model with `num_ctx` set to 25600. This lowers KV-cache
+memory compared with the previous 32768-token context and can allow Ollama to
+offload more layers to GPU; it does not guarantee full GPU offload, which also
+depends on free VRAM. Change the context with `AIVA_LLM_NUM_CTX`. Change the
+underlying installed model with `AIVA_LLM_SOURCE_MODEL`. Setting `AIVA_LLM_MODEL`
+selects an existing model directly and skips wrapper creation.
+
 Build the AIVA packages from this workspace:
 
 ```sh
@@ -87,8 +95,9 @@ The profile is added to Grace's system context when the file exists.
 
 Rosbridge must listen at `127.0.0.1:9090`; the console backend publishes the
 input signal there, and the browser receives responses through its WebSocket
-proxy. The default LLM endpoint is `http://127.0.0.1:11434/v1` and default
-model is `hf.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF:UD-Q4_K_XL`. For an authenticated endpoint, set `AIVA_LLM_API_KEY` in
+proxy. The default LLM endpoint is `http://127.0.0.1:11434/v1`; the launcher
+creates `aiva-ministral-3-8b-ctx25600` from
+`hf.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF:UD-Q4_K_XL`. For an authenticated endpoint, set `AIVA_LLM_API_KEY` in
 the environment; never put it in the ROS message or source files.
 
 The AIVA ROS workspace can run a small heartbeat process alongside its future

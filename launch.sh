@@ -12,7 +12,13 @@ WEBUI_PORT="${AGI_WEB_TELEOPS_CONSOLE_PORT:-8853}"
 WEBUI_URL="${AIVA_WEBUI_URL:-http://${WEBUI_HOST}:${WEBUI_PORT}}"
 START_CHAT="${AIVA_START_CHAT:-1}"
 LLM_BASE_URL="${AIVA_LLM_BASE_URL:-http://127.0.0.1:11434/v1}"
-LLM_MODEL="${AIVA_LLM_MODEL:-hf.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF:UD-Q4_K_XL}"
+LLM_NUM_CTX="${AIVA_LLM_NUM_CTX:-25600}"
+LLM_SOURCE_MODEL="${AIVA_LLM_SOURCE_MODEL:-hf.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF:UD-Q4_K_XL}"
+if [[ -n "${AIVA_LLM_MODEL:-}" ]]; then
+  LLM_MODEL="$AIVA_LLM_MODEL"
+else
+  LLM_MODEL="aiva-ministral-3-8b-ctx${LLM_NUM_CTX}"
+fi
 LLM_KEEP_ALIVE="${AIVA_LLM_KEEP_ALIVE:-30m}"
 PRELOAD_LLM="${AIVA_PRELOAD_LLM:-1}"
 LOG_DIR="${AIVA_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agi/aiva}"
@@ -181,9 +187,29 @@ then
   exit 1
 fi
 
+if [[ "$START_CHAT" == "1" && -z "${AIVA_LLM_MODEL:-}" && ( "$LLM_BASE_URL" == "http://127.0.0.1:11434/v1" || "$LLM_BASE_URL" == "http://localhost:11434/v1" ) ]]; then
+  create_context_model() {
+    local modelfile="$LOG_DIR/Modelfile.ctx${LLM_NUM_CTX}"
+    printf 'FROM %s\nPARAMETER num_ctx %s\n' "$LLM_SOURCE_MODEL" "$LLM_NUM_CTX" >"$modelfile"
+    ollama create "$LLM_MODEL" -f "$modelfile"
+  }
+  if ! command -v ollama >/dev/null 2>&1; then
+    error "Ollama CLI is required to create the AIVA context configuration."
+    exit 1
+  fi
+  if ! run_spinner "Configuring Ollama context (${LLM_NUM_CTX} tokens)" "$LOG_DIR/model-create.log" create_context_model; then
+    error "Ollama model configuration failed; check $LOG_DIR/model-create.log."
+    exit 1
+  fi
+fi
+
 if [[ "$START_CHAT" == "1" && "$PRELOAD_LLM" != "0" ]]; then
   stage "02 / 04" "Warm up Grace's language model"
-  info "Model: $LLM_MODEL  ${C_DIM}· keep alive: $LLM_KEEP_ALIVE${C_RESET}"
+  if [[ -z "${AIVA_LLM_MODEL:-}" && ( "$LLM_BASE_URL" == "http://127.0.0.1:11434/v1" || "$LLM_BASE_URL" == "http://localhost:11434/v1" ) ]]; then
+    info "Model: $LLM_MODEL  ${C_DIM}· context: $LLM_NUM_CTX · keep alive: $LLM_KEEP_ALIVE${C_RESET}"
+  else
+    info "Model: $LLM_MODEL  ${C_DIM}· keep alive: $LLM_KEEP_ALIVE${C_RESET}"
+  fi
   preload_llm() {
     "$AIVA_ROS_PYTHON" - "$LLM_BASE_URL" "$LLM_MODEL" "$LLM_KEEP_ALIVE" <<'PY'
 import json
