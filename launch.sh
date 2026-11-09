@@ -83,7 +83,8 @@ except OSError as error:
     raise SystemExit(1)
 PY
 then
-  echo "Find the process using that port with: fuser -n tcp $WEBUI_PORT" >&2
+  echo "Find the listener with: sudo ss -ltnp 'sport = :$WEBUI_PORT'" >&2
+  echo "Check its command with: ps -fp <PID> (replace <PID> with the ss process ID)." >&2
   echo "Stop only the stale AIVA WebUI process, then run ./launch.sh again." >&2
   exit 1
 fi
