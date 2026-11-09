@@ -84,7 +84,15 @@ class AivaChat(Node):
         )
 
     def _on_signal(self, signal: TelepathicSignal) -> None:
-        if signal.channel not in {"aiva", "agi", ""}:
+        self.get_logger().info(
+            f"Received TelepathicSignal on chat input (channel={signal.channel!r}, "
+            f"scheme={signal.scheme!r}, id={signal.identifier})"
+        )
+        # Older WebUI deployments use the legacy `grace` channel. It is still
+        # a direct user-to-Grace chat signal, so accept it alongside AIVA's
+        # newer explicit channel names.
+        if signal.channel not in {"aiva", "agi", "grace", ""}:
+            self.get_logger().info(f"Ignoring non-chat channel {signal.channel!r}")
             return
         try:
             text = self._cryptic.decode(bytes(signal.signal), int(signal.pulse), signal.scheme).strip()
