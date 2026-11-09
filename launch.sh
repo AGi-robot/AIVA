@@ -109,21 +109,74 @@ start_service() {
 
 cleanup() {
   trap - EXIT INT TERM
+  local index pid attempt
+  # Stop every service group first so ROS wrappers and their Python children
+  # all receive the signal, then give them a short chance to release sockets.
   for index in "${!pids[@]}"; do
     pid="${pids[$index]}"
-    # ROS commands can leave Python grandchildren behind if only the ros2
-    # wrapper is stopped. Each service gets a session when setsid exists.
     if [[ "${service_has_session[$index]}" == "1" ]]; then
-      kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      kill -TERM -- "-$pid" 2>/dev/null || true
     else
-      kill "$pid" 2>/dev/null || true
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+
+  for attempt in {1..20}; do
+    local any_alive=0
+    for index in "${!pids[@]}"; do
+      pid="${pids[$index]}"
+      if [[ "${service_has_session[$index]}" == "1" ]]; then
+        kill -0 -- "-$pid" 2>/dev/null && any_alive=1
+      else
+        kill -0 "$pid" 2>/dev/null && any_alive=1
+      fi
+    done
+    [[ "$any_alive" == "0" ]] && break
+    sleep 0.1
+  done
+
+  # A service that ignores TERM must not leave the WebUI port occupied.
+  for index in "${!pids[@]}"; do
+    pid="${pids[$index]}"
+    if [[ "${service_has_session[$index]}" == "1" ]]; then
+      kill -KILL -- "-$pid" 2>/dev/null || true
+    else
+      kill -KILL "$pid" 2>/dev/null || true
     fi
   done
   for pid in "${pids[@]}"; do
     wait "$pid" 2>/dev/null || true
   done
+
+  # Confirm the listener has released the configured WebUI address.
+  if ! "$AIVA_ROS_PYTHON" - "$WEBUI_HOST" "$WEBUI_PORT" <<'PY'
+import socket
+import sys
+
+try:
+    with socket.socket() as probe:
+        probe.bind((sys.argv[1], int(sys.argv[2])))
+except OSError:
+    raise SystemExit(1)
+PY
+  then
+    echo "Warning: $WEBUI_HOST:$WEBUI_PORT is still occupied after stopping AIVA services." >&2
+    echo "Check the remaining listener with: sudo ss -ltnp 'sport = :$WEBUI_PORT'" >&2
+  else
+    echo "AIVA services stopped; port $WEBUI_PORT is free."
+  fi
 }
-trap cleanup EXIT INT TERM
+handle_signal() {
+  local signal="$1"
+  cleanup
+  if [[ "$signal" == "INT" ]]; then
+    exit 130
+  fi
+  exit 143
+}
+trap cleanup EXIT
+trap 'handle_signal INT' INT
+trap 'handle_signal TERM' TERM
 
 start_service rosbridge ros2 launch rosbridge_server rosbridge_websocket_launch.xml address:=127.0.0.1
 if [[ "$START_CHAT" == "1" ]]; then
