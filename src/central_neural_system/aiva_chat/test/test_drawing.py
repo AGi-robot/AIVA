@@ -15,12 +15,25 @@ def test_drawing_validation_bounds_coordinates_and_preserves_text():
     assert result[0]['text'] == 'Hello 🌱'
 
 
+def test_letter_format_survives_validation_for_playback_and_later_editing():
+    letter = {'kind': 'letter', 'id': 'note', 'text': 'Dear friend,\n\nHello!\n\nGrace',
+              'x': 270, 'y': 20, 'width': 460, 'height': 610, 'size': 16,
+              'margin': 40, 'line_height': 1.5, 'align': 'left'}
+    assert validate_actions([letter])[0] == {**letter, 'fill': False}
+    bounded = validate_actions([{'kind': 'letter', 'margin': 1000, 'line_height': 0}])[0]
+    assert bounded['margin'] == 100
+    assert bounded['line_height'] == 1
+
+
 @pytest.mark.parametrize('actions', [
     [{'kind': 'execute', 'text': 'code'}],
     [{'kind': 'path', 'points': [[float('nan'), 20]]}],
     [{'kind': 'text', 'color': 'url(bad)'}],
     [{'kind': 'text', 'text': 'x' * 2001}],
     [{'kind': 'clear'}] * 101,
+    [{'kind': 'letter', 'align': 'justify'}],
+    [{'kind': 'letter', 'line_height': float('inf')}],
+    [{'kind': 'letter', 'margin': True}],
 ])
 def test_rejects_invalid_drawing_commands(actions):
     with pytest.raises(ValueError):
