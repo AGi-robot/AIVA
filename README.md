@@ -27,6 +27,20 @@ a different path.
 
 ## Central neural system packages
 
+### Automated checks
+
+GitHub Actions checks pushes and pull requests targeting `dev`. It validates
+`launch.sh` syntax, compiles AIVA's chat and signal Python packages, and runs
+unit tests for conversation memory and signal encoding. Run the unit tests from
+the repository root with:
+
+```sh
+PYTHONPATH=AIVA/src/central_neural_system/aiva_chat:AIVA/src/central_neural_system/cryptic_signal_core \
+  python3 -m unittest discover -s AIVA/src/central_neural_system/aiva_chat/test -v
+PYTHONPATH=AIVA/src/central_neural_system/aiva_chat:AIVA/src/central_neural_system/cryptic_signal_core \
+  python3 -m unittest discover -s AIVA/src/central_neural_system/cryptic_signal_core/test -v
+```
+
 Packages grouped under `src/central_neural_system/` belong to AIVA's central neural system. For
 example, `src/central_neural_system/cryptic_signal_core` is AIVA's cryptic ROS package, containing
 its message definitions and encoder class.
