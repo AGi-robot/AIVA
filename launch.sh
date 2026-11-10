@@ -259,9 +259,10 @@ if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or parsed.port != 11
     raise SystemExit(0)
 
 origin = f"{parsed.scheme}://{parsed.netloc}"
+keep_alive_value = -1 if keep_alive == "-1" else keep_alive
 request = Request(
     f"{origin}/api/generate",
-    data=json.dumps({"model": model, "keep_alive": keep_alive, "stream": False}).encode(),
+    data=json.dumps({"model": model, "keep_alive": keep_alive_value, "stream": False}).encode(),
     headers={"Content-Type": "application/json"},
     method="POST",
 )
