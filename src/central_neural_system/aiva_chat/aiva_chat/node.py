@@ -18,6 +18,7 @@ from std_msgs.msg import String
 from ament_index_python.packages import get_package_share_directory
 
 from .memory import GraceMemory
+from .drawing import DRAW_TOOL, DRAW_INSTRUCTIONS, validate_actions
 
 
 def _load_soul() -> str:
@@ -116,6 +117,10 @@ class AivaChat(Node):
         text = str(payload.get("text", ""))
         if payload.get("web_search"):
             text = f"/web {text}"
+        if isinstance(payload.get("canvas"), dict):
+            if text.strip():
+                self._pool.submit(self._draw, text.strip(), str(payload.get("identifier", "")), payload["canvas"])
+            return
         self._submit_prompt(text, str(payload.get("identifier", "")))
 
     def _on_signal(self, signal: TelepathicSignal) -> None:
@@ -136,7 +141,7 @@ class AivaChat(Node):
             return
         self._submit_prompt(text, signal.identifier)
 
-    def _publish(self, event: dict[str, str]) -> None:
+    def _publish(self, event: dict) -> None:
         message = String()
         message.data = json.dumps(event, ensure_ascii=False)
         self._response_pub.publish(message)
@@ -215,6 +220,43 @@ class AivaChat(Node):
         except Exception as error:  # report provider/network failures to the chat UI
             self.get_logger().error(f"AIVA LLM request failed: {error}")
             self._publish({"type": "error", "content": f"AIVA could not reach its LLM: {error}"})
+
+    def _draw(self, text: str, identifier: str, canvas: dict) -> None:
+        """Ask the model for bounded drawing actions and send them to the Canvas page."""
+        try:
+            objects = canvas.get("objects", [])
+            if not isinstance(objects, list) or len(objects) > 100:
+                raise ValueError("Canvas is too large for one drawing request")
+            objects = validate_actions(objects) if objects else []
+            selected = canvas.get("selected")
+            if selected not in {obj.get("id") for obj in objects}:
+                selected = None
+            headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+            self._publish({"type": "canvas_start", "identifier": identifier})
+            response = httpx.post(
+                f"{self._base_url}/chat/completions",
+                json={"model": self._model, "messages": [
+                    {"role": "system", "content": self._system_prompt + "\n\n" + DRAW_INSTRUCTIONS},
+                    {"role": "user", "content": "Canvas state: " + json.dumps({"objects": objects, "selected": selected}, ensure_ascii=False)},
+                    {"role": "user", "content": text},
+                ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "stream": False},
+                headers=headers, timeout=120,
+            )
+            response.raise_for_status()
+            message = response.json()["choices"][0]["message"]
+            actions = []
+            for call in message.get("tool_calls", []):
+                function = call.get("function", {})
+                if function.get("name") != "canvas_draw":
+                    raise ValueError("Unsupported drawing tool")
+                actions.extend(validate_actions(json.loads(function["arguments"])["actions"]))
+            actions = validate_actions(actions)
+            self._publish({"type": "canvas_actions", "identifier": identifier, "actions": actions})
+            self._memory.add_exchange(text, f"Prepared {len(actions)} canvas actions: " + json.dumps(actions, ensure_ascii=False))
+            self._publish({"type": "canvas_done", "identifier": identifier})
+        except Exception as error:
+            self.get_logger().error(f"Canvas request failed: {error}")
+            self._publish({"type": "canvas_error", "identifier": identifier, "content": str(error)})
 
     def destroy_node(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
