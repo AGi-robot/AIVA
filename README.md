@@ -29,16 +29,16 @@ a different path.
 
 ### Automated checks
 
-GitHub Actions checks pushes and pull requests targeting `dev`. It validates
-`launch.sh` syntax, compiles AIVA's chat and signal Python packages, and runs
-unit tests for conversation memory and signal encoding. Run the unit tests from
-the repository root with:
+GitHub Actions checks pushes and pull requests targeting `dev`. Its fast job
+validates `launch.sh`, tests whether it starts chat only when enabled, exercises
+the ROS chat adapter with message doubles, and tests memory and signal encoding.
+A second job builds the AIVA ROS packages on Jazzy and sends messages through a
+real ROS graph. Run the non-ROS tests from the repository root with:
 
 ```sh
+python3 -m pip install pytest httpx
 PYTHONPATH=AIVA/src/central_neural_system/aiva_chat:AIVA/src/central_neural_system/cryptic_signal_core \
-  python3 -m unittest discover -s AIVA/src/central_neural_system/aiva_chat/test -v
-PYTHONPATH=AIVA/src/central_neural_system/aiva_chat:AIVA/src/central_neural_system/cryptic_signal_core \
-  python3 -m unittest discover -s AIVA/src/central_neural_system/cryptic_signal_core/test -v
+  python3 -m pytest -q AIVA/src/central_neural_system/aiva_chat/test AIVA/src/central_neural_system/cryptic_signal_core/test
 ```
 
 Packages grouped under `src/central_neural_system/` belong to AIVA's central neural system. For
