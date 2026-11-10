@@ -1,6 +1,5 @@
 import os
 import signal
-import select
 import subprocess
 import time
 from pathlib import Path
@@ -67,32 +66,27 @@ exec sleep 60
 def run_to_ready(fake_aiva, start_chat):
     script, env, service_log = fake_aiva
     env["AIVA_START_CHAT"] = str(start_chat)
-    process = subprocess.Popen(
-        ["bash", str(script)], env=env, cwd=script.parent,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
-    )
-    output = []
+    output_path = script.parent / "launch-output.log"
+    with output_path.open("w") as output_file:
+        process = subprocess.Popen(
+            ["bash", str(script)], env=env, cwd=script.parent,
+            stdout=output_file, stderr=subprocess.STDOUT, start_new_session=True,
+        )
+    output = ""
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        ready, _, _ = select.select([process.stdout], [], [], 0.2)
-        if ready:
-            line = process.stdout.readline()
-        else:
-            line = ""
-        if line:
-            output.append(line)
-            if "WebUI is ready" in line:
-                break
-        elif process.poll() is not None:
+        output = output_path.read_text()
+        if "WebUI is ready" in output or process.poll() is not None:
             break
-    if not any("WebUI is ready" in line for line in output):
+        time.sleep(0.05)
+    if "WebUI is ready" not in output:
         process.send_signal(signal.SIGTERM)
         try:
             process.wait(timeout=8)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
-        pytest.fail("launch.sh did not reach ready state:\\n" + "".join(output))
+        pytest.fail("launch.sh did not reach ready state:\\n" + output)
     return process, service_log
 
 
