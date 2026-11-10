@@ -146,14 +146,17 @@ class AivaChat(Node):
             timezone_name = os.getenv("AIVA_TIMEZONE", "America/Vancouver")
             now = datetime.now(ZoneInfo(timezone_name))
             normalized_text = text.casefold()
-            asks_for_clock = bool(
-                re.search(r"\b(time|clock)\b", normalized_text)
-                and re.search(r"\b(what|what's|whats|tell me|current|right now|again|time)\b", normalized_text)
-            )
-            asks_for_date = bool(
-                re.search(r"\b(date|day)\b", normalized_text)
-                and re.search(r"\b(what|what's|whats|tell me|current|today|right now)\b", normalized_text)
-            )
+            asks_for_clock = bool(re.search(
+                r"\b(?:what(?:'s| is)?\s+(?:the\s+)?time(?:\s+is\s+it)?|"
+                r"what\s+time\s+is\s+it|do\s+you\s+know\s+(?:(?:what|the)\s+)?time(?:\s+it\s+is)?|"
+                r"tell\s+me\s+(?:the\s+)?time|current\s+time|time\s+(?:right\s+now|now|again))\b",
+                normalized_text,
+            ))
+            asks_for_date = bool(re.search(
+                r"\b(?:what(?:'s| is)?\s+(?:today's\s+)?date|what(?:'s| is)?\s+the\s+date\s+today|"
+                r"what(?:'s| is)?\s+(?:the\s+)?day\s+(?:today|is\s+it)|current\s+date|today's\s+date|date\s+today)\b",
+                normalized_text,
+            ))
             if asks_for_clock or asks_for_date:
                 local_date = f"{now.strftime('%A, %B')} {now.day}, {now.year}"
                 local_time = now.strftime("%I:%M %p").lstrip("0")
