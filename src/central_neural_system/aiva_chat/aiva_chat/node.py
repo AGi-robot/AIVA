@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -144,6 +145,29 @@ class AivaChat(Node):
         try:
             timezone_name = os.getenv("AIVA_TIMEZONE", "America/Vancouver")
             now = datetime.now(ZoneInfo(timezone_name))
+            normalized_text = text.casefold()
+            asks_for_clock = bool(
+                re.search(r"\b(time|clock)\b", normalized_text)
+                and re.search(r"\b(what|what's|whats|tell me|current|right now|again|time)\b", normalized_text)
+            )
+            asks_for_date = bool(
+                re.search(r"\b(date|day)\b", normalized_text)
+                and re.search(r"\b(what|what's|whats|tell me|current|today|right now)\b", normalized_text)
+            )
+            if asks_for_clock or asks_for_date:
+                local_date = f"{now.strftime('%A, %B')} {now.day}, {now.year}"
+                local_time = now.strftime("%I:%M %p").lstrip("0")
+                if asks_for_clock and asks_for_date:
+                    answer = f"It’s {local_date} at {local_time} {now.tzname()} ({timezone_name})."
+                elif asks_for_clock:
+                    answer = f"It’s {local_time} {now.tzname()} ({timezone_name}) on {local_date}."
+                else:
+                    answer = f"Today is {local_date} ({timezone_name})."
+                self._publish({"type": "start", "content": ""})
+                self._publish({"type": "delta", "content": answer})
+                self._memory.add_exchange(text, answer)
+                self._publish({"type": "done", "content": "", "radio_id": identifier})
+                return
             current_time = (
                 f"Current local date and time: {now.strftime('%A, %B %d, %Y at %I:%M:%S %p %Z')} "
                 f"in the {timezone_name} timezone (UTC offset {now.strftime('%z')}). "
