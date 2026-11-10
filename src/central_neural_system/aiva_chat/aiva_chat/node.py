@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from zoneinfo import ZoneInfo
 
 import httpx
 import rclpy
@@ -140,11 +141,12 @@ class AivaChat(Node):
 
     def _answer(self, text: str, identifier: str) -> None:
         try:
-            now = datetime.now().astimezone()
+            timezone_name = os.getenv("AIVA_TIMEZONE", "America/Vancouver")
+            now = datetime.now(ZoneInfo(timezone_name))
             current_time = (
                 f"Current local date and time: {now.strftime('%A, %B %d, %Y at %I:%M:%S %p %Z')} "
-                f"(UTC offset {now.strftime('%z')}). "
-                "Use this as the authoritative current local time."
+                f"in the {timezone_name} timezone (UTC offset {now.strftime('%z')}). "
+                "Use this as the authoritative current time for the user."
             )
             messages = [{"role": "system", "content": f"{self._system_prompt}\n\n{current_time}"}]
             messages.extend(self._memory.recent())
