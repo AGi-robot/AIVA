@@ -187,6 +187,7 @@ import sys
 host, port = sys.argv[1], int(sys.argv[2])
 try:
     with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind((host, port))
 except OSError as error:
     print(f"WebUI cannot bind to {host}:{port}: {error}", file=sys.stderr)
@@ -362,6 +363,7 @@ import sys
 
 try:
     with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind((sys.argv[1], int(sys.argv[2])))
 except OSError:
     raise SystemExit(1)
