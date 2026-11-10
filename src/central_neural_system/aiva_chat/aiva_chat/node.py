@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -139,7 +140,13 @@ class AivaChat(Node):
 
     def _answer(self, text: str, identifier: str) -> None:
         try:
-            messages = [{"role": "system", "content": self._system_prompt}]
+            now = datetime.now().astimezone()
+            current_time = (
+                f"Current local date and time: {now.strftime('%A, %B %d, %Y at %I:%M:%S %p %Z')} "
+                f"(UTC offset {now.strftime('%z')}). "
+                "Use this as the authoritative current local time."
+            )
+            messages = [{"role": "system", "content": f"{self._system_prompt}\n\n{current_time}"}]
             messages.extend(self._memory.recent())
             messages.append({"role": "user", "content": text})
             headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
