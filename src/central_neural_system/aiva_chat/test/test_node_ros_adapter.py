@@ -58,10 +58,10 @@ def test_streamed_llm_reply_is_published_and_persisted(tmp_path, monkeypatch):
     assert args[:2] == ("POST", "http://llm.test/v1/chat/completions")
     assert kwargs["headers"] == {"Authorization": "Bearer test-token"}
     assert kwargs["json"]["stream"] is True
-    assert kwargs["json"]["messages"] == [
-        {"role": "system", "content": "You are Grace."},
-        {"role": "user", "content": "Hello Grace"},
-    ]
+    messages = kwargs["json"]["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"].startswith("You are Grace.\n\nCurrent local date and time:")
+    assert messages[1:] == [{"role": "user", "content": "Hello Grace"}]
     assert [json.loads(call.args[0].data)["type"] for call in node._response_pub.publish.call_args_list] == [
         "start", "delta", "delta", "done",
     ]
