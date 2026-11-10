@@ -245,12 +245,17 @@ class AivaChat(Node):
             response.raise_for_status()
             message = response.json()["choices"][0]["message"]
             actions = []
+            reply = "Here is what I made for you."
             for call in message.get("tool_calls", []):
                 function = call.get("function", {})
                 if function.get("name") != "canvas_draw":
                     raise ValueError("Unsupported drawing tool")
-                actions.extend(validate_actions(json.loads(function["arguments"])["actions"]))
+                result = json.loads(function["arguments"])
+                actions.extend(validate_actions(result["actions"]))
+                if isinstance(result.get("response"), str):
+                    reply = result["response"].strip()[:1000] or reply
             actions = validate_actions(actions)
+            self._publish({"type": "canvas_reply", "identifier": identifier, "content": reply})
             self._publish({"type": "canvas_actions", "identifier": identifier, "actions": actions})
             self._memory.add_exchange(text, f"Prepared {len(actions)} canvas actions: " + json.dumps(actions, ensure_ascii=False))
             self._publish({"type": "canvas_done", "identifier": identifier})

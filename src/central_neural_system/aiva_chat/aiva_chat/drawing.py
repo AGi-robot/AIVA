@@ -24,10 +24,14 @@ ACTION_SCHEMA = {
 DRAW_TOOL = {'type': 'function', 'function': {
     'name': 'canvas_draw',
     'description': 'Draw or edit the shared canvas. Actions replay in order for the user.',
-    'parameters': {'type': 'object', 'properties': {'actions': {'type': 'array', 'items': ACTION_SCHEMA, 'maxItems': 100}}, 'required': ['actions'], 'additionalProperties': False},
+    'parameters': {'type': 'object', 'properties': {
+        'actions': {'type': 'array', 'items': ACTION_SCHEMA, 'maxItems': 100},
+        'response': {'type': 'string', 'description': 'A short, friendly sentence to show beside the drawing.'},
+    }, 'required': ['actions', 'response'], 'additionalProperties': False},
 }}
 DRAW_INSTRUCTIONS = '''You are Grace using a shared drawing canvas, 1000 by 650 pixels.
 Use canvas_draw to draw or write what the user requests. Actions replay visibly in order.
+Include a brief natural-language response (one or two sentences) for the Canvas response area.
 Origin is top left. Use path points for freehand; line uses points [start,end]; rectangle/ellipse use x,y,width,height;
 text uses x,y (top left), text, color, size (font size). Erase uses points and size.
 For a letter, use kind letter: a white portrait page with serif text, wrapped paragraphs and margins.

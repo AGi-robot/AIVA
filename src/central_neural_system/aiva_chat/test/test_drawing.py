@@ -51,15 +51,16 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     node.get_logger = Mock(return_value=Mock())
     response = Mock()
     response.json.return_value = {'choices': [{'message': {'tool_calls': [{'function': {
-        'name': 'canvas_draw', 'arguments': json.dumps({'actions': [{'kind': 'text', 'text': 'Hello!', 'x': 20, 'y': 30}]})
+        'name': 'canvas_draw', 'arguments': json.dumps({'actions': [{'kind': 'text', 'text': 'Hello!', 'x': 20, 'y': 30}], 'response': 'Here is a hello!'})
     }}]}}]}
     request = Mock(return_value=response)
     monkeypatch.setattr('aiva_chat.node.httpx.post', request)
     node._draw('Write hello', 'draw-1', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
-    assert [event['type'] for event in events] == ['canvas_start', 'canvas_actions', 'canvas_done']
+    assert [event['type'] for event in events] == ['canvas_start', 'canvas_reply', 'canvas_actions', 'canvas_done']
+    assert events[1]['content'] == 'Here is a hello!'
     assert events[1]['identifier'] == 'draw-1'
-    assert events[1]['actions'][0]['text'] == 'Hello!'
+    assert events[2]['actions'][0]['text'] == 'Hello!'
     assert request.call_args.kwargs['json']['tools'][0]['function']['name'] == 'canvas_draw'
     assert node._memory.recent()[0]['content'] == 'Write hello'
 
