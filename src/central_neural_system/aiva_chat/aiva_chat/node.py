@@ -88,7 +88,8 @@ class AivaChat(Node):
             10,
         )
         self.get_logger().info(
-            f"AIVA chat listening on {self.get_parameter('input_topic').value}; "
+            f"AIVA chat listening on {self.get_parameter('input_topic').value} and "
+            f"WebUI input {self.get_parameter('webui_input_topic').value}; "
             f"LLM={self._base_url} model={self._model}"
         )
 
