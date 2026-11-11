@@ -277,6 +277,14 @@ class AivaChat(Node):
                         "color": "#df78a8", "text": note,
                     }]
                 actions.extend(validate_actions(requested_actions))
+            if not actions:
+                note = str(message.get("content") or "").strip()[:300]
+                if not note:
+                    note = text[:300] or "A little note for you."
+                actions = validate_actions([{
+                    "kind": "text", "x": 90, "y": 120, "size": 32,
+                    "color": "#df78a8", "text": note,
+                }])
             actions = validate_actions(actions)
             self._publish({"type": "canvas_reply", "identifier": identifier, "content": reply})
             self._publish({"type": "canvas_actions", "identifier": identifier, "actions": actions})
