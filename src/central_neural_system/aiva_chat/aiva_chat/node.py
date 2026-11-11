@@ -237,8 +237,11 @@ class AivaChat(Node):
                 f"{self._base_url}/chat/completions",
                 json={"model": self._model, "messages": [
                     {"role": "system", "content": self._system_prompt + "\n\n" + DRAW_INSTRUCTIONS},
-                    {"role": "user", "content": "Canvas state: " + json.dumps({"objects": objects, "selected": selected}, ensure_ascii=False)},
-                    {"role": "user", "content": text},
+                    {"role": "user", "content": (
+                        "Canvas state: "
+                        + json.dumps({"objects": objects, "selected": selected}, ensure_ascii=False)
+                        + "\n\nDrawing request: " + text
+                    )},
                 ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "stream": False},
                 headers=headers, timeout=120,
             )
