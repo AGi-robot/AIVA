@@ -242,7 +242,17 @@ class AivaChat(Node):
                 ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "stream": False},
                 headers=headers, timeout=120,
             )
-            response.raise_for_status()
+            if response.is_error:
+                # Ollama's generic HTTPStatusError string omits its response
+                # body, which often contains the actual tool/model failure.
+                detail = response.text.strip().replace("\n", " ")[:1200]
+                self.get_logger().error(
+                    f"Canvas LLM request returned HTTP {response.status_code}: {detail}"
+                )
+                raise RuntimeError(
+                    f"LLM returned HTTP {response.status_code}"
+                    + (f": {detail}" if detail else "")
+                )
             message = response.json()["choices"][0]["message"]
             actions = []
             reply = "Here is what I made for you."
