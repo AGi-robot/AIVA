@@ -25,6 +25,15 @@ def test_letter_format_survives_validation_for_playback_and_later_editing():
     assert bounded['line_height'] == 1
 
 
+def test_paint_attributes_and_partial_style_survive_round_trip():
+    paint = {'kind': 'polygon', 'points': [[10, 10], [70, 30], [40, 80]],
+             'color': '#b84a56', 'fill_color': '#ed8060', 'gradient_color': '#f4c56a',
+             'gradient': 'radial', 'opacity': 0.3, 'brush': 'soft', 'fill': True, 'stroke': False}
+    assert validate_actions([paint])[0] == paint
+    assert validate_actions([{'kind': 'style', 'id': 'petal', 'opacity': 0.5}])[0] == {
+        'kind': 'style', 'id': 'petal', 'opacity': 0.5}
+
+
 @pytest.mark.parametrize('actions', [
     [{'kind': 'execute', 'text': 'code'}],
     [{'kind': 'path', 'points': [[float('nan'), 20]]}],
@@ -34,6 +43,9 @@ def test_letter_format_survives_validation_for_playback_and_later_editing():
     [{'kind': 'letter', 'align': 'justify'}],
     [{'kind': 'letter', 'line_height': float('inf')}],
     [{'kind': 'letter', 'margin': True}],
+    [{'kind': 'ellipse', 'gradient_color': 'red'}],
+    [{'kind': 'path', 'points': [[1, 2]], 'brush': 'unknown'}],
+    [{'kind': 'style', 'opacity': float('nan')}],
 ])
 def test_rejects_invalid_drawing_commands(actions):
     with pytest.raises(ValueError):
