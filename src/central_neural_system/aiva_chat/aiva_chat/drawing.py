@@ -32,6 +32,8 @@ DRAW_TOOL = {'type': 'function', 'function': {
 DRAW_INSTRUCTIONS = '''You are Grace using a shared drawing canvas, 1000 by 650 pixels.
 Use canvas_draw to draw or write what the user requests. Actions replay visibly in order.
 Include a brief natural-language response (one or two sentences) for the Canvas response area.
+Keep every action wholly within x=0–1000 and y=0–650, preferably leaving a 25 pixel margin from each edge.
+Do not use kind letter unless the user explicitly asks for a letter or a page of writing. For labels, use kind text.
 Origin is top left. Use path points for freehand; line uses points [start,end]; rectangle/ellipse use x,y,width,height;
 text uses x,y (top left), text, color, size (font size). Erase uses points and size.
 For a letter, use kind letter: a white portrait page with serif text, wrapped paragraphs and margins.
@@ -83,5 +85,23 @@ def validate_actions(actions):
                 if not isinstance(point, list) or len(point) != 2 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in point):
                     raise ValueError('Invalid point')
                 item['points'].append([max(0, min(1000, point[0])), max(0, min(650, point[1]))])
+        if action['kind'] in ('rectangle', 'ellipse'):
+            width = min(item.get('width', 0), 1000)
+            height = min(item.get('height', 0), 650)
+            item['width'] = width
+            item['height'] = height
+            item['x'] = min(item.get('x', 0), 1000 - width)
+            item['y'] = min(item.get('y', 0), 650 - height)
+        if action['kind'] == 'letter':
+            item.setdefault('x', 270)
+            item.setdefault('y', 20)
+            item.setdefault('width', 460)
+            item.setdefault('height', 610)
+            width = min(item['width'], 1000)
+            height = min(item['height'], 650)
+            item['width'] = width
+            item['height'] = height
+            item['x'] = min(item['x'], 1000 - width)
+            item['y'] = min(item['y'], 650 - height)
         result.append(item)
     return result
