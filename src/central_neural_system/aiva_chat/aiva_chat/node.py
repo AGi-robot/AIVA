@@ -171,8 +171,8 @@ class AivaChat(Node):
                     answer = f"It’s {local_time} {now.tzname()} ({timezone_name}) on {local_date}."
                 else:
                     answer = f"Today is {local_date} ({timezone_name})."
-                self._publish({"type": "start", "content": ""})
-                self._publish({"type": "delta", "content": answer})
+                self._publish({"type": "start", "content": "", "radio_id": identifier})
+                self._publish({"type": "delta", "content": answer, "radio_id": identifier})
                 self._memory.add_exchange(text, answer)
                 self._publish({"type": "done", "content": "", "radio_id": identifier})
                 return
@@ -185,7 +185,7 @@ class AivaChat(Node):
             messages.extend(self._memory.recent())
             messages.append({"role": "user", "content": text})
             headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-            self._publish({"type": "start", "content": ""})
+            self._publish({"type": "start", "content": "", "radio_id": identifier})
             answer_parts: list[str] = []
             with httpx.stream(
                 "POST",
@@ -209,7 +209,7 @@ class AivaChat(Node):
                         continue
                     if isinstance(chunk, str) and chunk:
                         answer_parts.append(chunk)
-                        self._publish({"type": "delta", "content": chunk})
+                        self._publish({"type": "delta", "content": chunk, "radio_id": identifier})
 
             answer = "".join(answer_parts).strip()
             if not answer:
@@ -219,7 +219,7 @@ class AivaChat(Node):
             self.get_logger().info(f"Published Grace reply (id={identifier})")
         except Exception as error:  # report provider/network failures to the chat UI
             self.get_logger().error(f"AIVA LLM request failed: {error}")
-            self._publish({"type": "error", "content": f"AIVA could not reach its LLM: {error}"})
+            self._publish({"type": "error", "content": f"AIVA could not reach its LLM: {error}", "radio_id": identifier})
 
     def _draw(self, text: str, identifier: str, canvas: dict) -> None:
         """Ask the model for bounded drawing actions and send them to the Canvas page."""
@@ -237,6 +237,7 @@ class AivaChat(Node):
                 f"{self._base_url}/chat/completions",
                 json={"model": self._model, "messages": [
                     {"role": "system", "content": self._system_prompt + "\n\n" + DRAW_INSTRUCTIONS},
+                    *self._memory.recent(),
                     {"role": "user", "content": (
                         "Canvas state: "
                         + json.dumps({"objects": objects, "selected": selected}, ensure_ascii=False)
@@ -288,7 +289,7 @@ class AivaChat(Node):
             actions = validate_actions(actions)
             self._publish({"type": "canvas_reply", "identifier": identifier, "content": reply})
             self._publish({"type": "canvas_actions", "identifier": identifier, "actions": actions})
-            self._memory.add_exchange(text, f"Prepared {len(actions)} canvas actions: " + json.dumps(actions, ensure_ascii=False))
+            self._memory.add_exchange(text, reply + f"\n\nPrepared {len(actions)} canvas actions (playback not confirmed): " + json.dumps(actions, ensure_ascii=False))
             self._publish({"type": "canvas_done", "identifier": identifier})
         except Exception as error:
             self.get_logger().error(f"Canvas request failed: {error}")

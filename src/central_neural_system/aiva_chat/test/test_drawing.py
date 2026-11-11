@@ -59,6 +59,7 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     node._system_prompt = 'You are Grace.'
     node._api_key = ''
     node._memory = GraceMemory(str(tmp_path / 'memory.sqlite'))
+    node._memory.add_exchange('My favorite color is coral.', 'I will remember coral.')
     node._publish = Mock()
     node.get_logger = Mock(return_value=Mock())
     response = Mock()
@@ -76,10 +77,15 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     assert events[2]['actions'][0]['text'] == 'Hello!'
     assert request.call_args.kwargs['json']['tools'][0]['function']['name'] == 'canvas_draw'
     messages = request.call_args.kwargs['json']['messages']
-    assert [item['role'] for item in messages] == ['system', 'user']
-    assert 'Canvas state:' in messages[1]['content']
-    assert 'Drawing request: Write hello' in messages[1]['content']
-    assert node._memory.recent()[0]['content'] == 'Write hello'
+    assert [item['role'] for item in messages] == ['system', 'user', 'assistant', 'user']
+    assert messages[1]['content'] == 'My favorite color is coral.'
+    assert 'Canvas state:' in messages[-1]['content']
+    assert 'Drawing request: Write hello' in messages[-1]['content']
+    assert node._memory.recent()[-2]['content'] == 'Write hello'
+    assert node._memory.recent()[-1]['content'].startswith('Here is a hello!')
+    restored = GraceMemory(str(tmp_path / 'memory.sqlite'))
+    assert restored.recent()[-1]['content'].startswith('Here is a hello!')
+    assert 'playback not confirmed' in restored.recent()[-1]['content']
 
     response.json.return_value = {'choices': [{'message': {'tool_calls': [{'function': {
         'name': 'canvas_draw', 'arguments': json.dumps({'actions': [], 'response': 'A little note for you.'})

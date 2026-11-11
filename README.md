@@ -152,3 +152,8 @@ systemctl --user enable --now agi-aiva-presence.service
 
 The service starts with your AIVA user session and stops when the PC shuts down.
 Replace the URL with the HTTPS host shown by `tailscale serve status` on AuRoRA.
+
+Canvas requests use the same recent conversation memory as normal chat (the configured
+`memory_turns` window). Your prompt, Grace's written reply, and her proposed drawing plan are
+stored persistently in SQLite. The plan is recorded as unconfirmed playback; browser artwork
+is still saved locally and is not a visual memory or proof that the drawing completed.
