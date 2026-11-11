@@ -46,6 +46,8 @@ def spin_until(node, predicate, timeout=4):
 def test_chat_input_topics_and_response_topic_on_ros_graph(tmp_path, monkeypatch):
     monkeypatch.setenv("AGI_HOME", str(tmp_path))
     monkeypatch.setenv("AIVA_MEMORY_PATH", str(tmp_path / "memory.sqlite3"))
+    # Keep local AIVA processes and parallel ROS tests out of this graph.
+    monkeypatch.setenv("ROS_DOMAIN_ID", str(50 + os.getpid() % 180))
     monkeypatch.setattr(chat_node.httpx, "stream", Mock(return_value=FakeStreamingResponse()))
     rclpy.init()
     node = AivaChat()

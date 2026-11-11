@@ -50,6 +50,7 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     node._publish = Mock()
     node.get_logger = Mock(return_value=Mock())
     response = Mock()
+    response.is_error = False
     response.json.return_value = {'choices': [{'message': {'tool_calls': [{'function': {
         'name': 'canvas_draw', 'arguments': json.dumps({'actions': [{'kind': 'text', 'text': 'Hello!', 'x': 20, 'y': 30}], 'response': 'Here is a hello!'})
     }}]}}]}
@@ -62,7 +63,21 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     assert events[1]['identifier'] == 'draw-1'
     assert events[2]['actions'][0]['text'] == 'Hello!'
     assert request.call_args.kwargs['json']['tools'][0]['function']['name'] == 'canvas_draw'
+    messages = request.call_args.kwargs['json']['messages']
+    assert [item['role'] for item in messages] == ['system', 'user']
+    assert 'Canvas state:' in messages[1]['content']
+    assert 'Drawing request: Write hello' in messages[1]['content']
     assert node._memory.recent()[0]['content'] == 'Write hello'
+
+    response.json.return_value = {'choices': [{'message': {'tool_calls': [{'function': {
+        'name': 'canvas_draw', 'arguments': json.dumps({'actions': [], 'response': 'A little note for you.'})
+    }}]}}]}
+    node._publish.reset_mock()
+    node._draw('Write me a note', 'draw-empty', {'objects': []})
+    empty_action_events = [call.args[0] for call in node._publish.call_args_list]
+    canvas_actions = next(event for event in empty_action_events if event['type'] == 'canvas_actions')
+    assert canvas_actions['actions'][0]['kind'] == 'text'
+    assert canvas_actions['actions'][0]['text'] == 'A little note for you.'
 
     response.json.return_value = {'choices': [{'message': {'tool_calls': [{'function': {
         'name': 'canvas_draw', 'arguments': '{invalid json'

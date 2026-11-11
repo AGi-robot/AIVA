@@ -15,7 +15,7 @@ if os.environ.get("AIVA_TEST_WITH_ROS") != "1" and "rclpy" not in sys.modules:
     sys.modules["rclpy"] = rclpy
     sys.modules["rclpy.node"] = rclpy_node
 
-if "cryptic_signal_core.msg" not in sys.modules:
+if os.environ.get("AIVA_TEST_WITH_ROS") != "1" and "cryptic_signal_core.msg" not in sys.modules:
     cryptic = types.ModuleType("cryptic_signal_core")
     cryptic.__path__ = []
     cryptic_msg = types.ModuleType("cryptic_signal_core.msg")
@@ -24,7 +24,7 @@ if "cryptic_signal_core.msg" not in sys.modules:
     sys.modules["cryptic_signal_core"] = cryptic
     sys.modules["cryptic_signal_core.msg"] = cryptic_msg
 
-if "std_msgs.msg" not in sys.modules:
+if os.environ.get("AIVA_TEST_WITH_ROS") != "1" and "std_msgs.msg" not in sys.modules:
     std_msgs = types.ModuleType("std_msgs")
     std_msgs.__path__ = []
     std_msgs_msg = types.ModuleType("std_msgs.msg")
@@ -33,7 +33,7 @@ if "std_msgs.msg" not in sys.modules:
     sys.modules["std_msgs"] = std_msgs
     sys.modules["std_msgs.msg"] = std_msgs_msg
 
-if "ament_index_python.packages" not in sys.modules:
+if os.environ.get("AIVA_TEST_WITH_ROS") != "1" and "ament_index_python.packages" not in sys.modules:
     ament_index = types.ModuleType("ament_index_python")
     ament_index.__path__ = []
     packages = types.ModuleType("ament_index_python.packages")
