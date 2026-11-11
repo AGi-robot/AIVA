@@ -93,8 +93,8 @@ def run_to_ready(fake_aiva, start_chat):
 @pytest.mark.parametrize(
     ("start_chat", "expected"),
     [
-        ("1", ["launch rosbridge_server", "run aiva_chat", "run telepathic_management"]),
-        ("0", ["launch rosbridge_server", "run telepathic_management"]),
+            ("1", ["launch rosbridge_server", "run aiva_chat", "run telepathic_management", "run agi_logging"]),
+            ("0", ["launch rosbridge_server", "run telepathic_management", "run agi_logging"]),
     ],
 )
 def test_launch_starts_expected_services_and_stops_them(fake_aiva, start_chat, expected):

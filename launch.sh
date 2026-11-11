@@ -45,7 +45,9 @@ else
   LLM_KEEP_ALIVE_LABEL="$LLM_KEEP_ALIVE"
 fi
 PRELOAD_LLM="${AIVA_PRELOAD_LLM:-1}"
-LOG_DIR="${AIVA_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agi/aiva}"
+AGI_HOME="${AGI_HOME:-$HOME/.agi}"
+LOG_DIR="${AIVA_LOG_DIR:-$AGI_HOME/log}"
+export AGI_HOME AGI_LOG_DIR="$LOG_DIR" ROS_LOG_DIR="$LOG_DIR/ros"
 export AIVA_LLM_BASE_URL="$LLM_BASE_URL"
 export AIVA_LLM_MODEL="$LLM_MODEL"
 
@@ -148,7 +150,7 @@ if [[ ${#WORKSPACE_PACKAGES[@]} -eq 0 ]]; then
   exit 1
 fi
 
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" "$ROS_LOG_DIR"
 stage "01 / 04" "Build workspace"
 stage "01 / 04" "Build workspace"
 build_workspace() {
@@ -389,6 +391,7 @@ trap 'handle_signal TERM' TERM
 
 stage "03 / 04" "Start AIVA services"
 start_service rosbridge ros2 launch rosbridge_server rosbridge_websocket_launch.xml address:=127.0.0.1
+start_service log-collector ros2 run agi_logging agi_log_collector
 if [[ "$START_CHAT" == "1" ]]; then
   start_service aiva-chat ros2 run aiva_chat aiva_chat
 fi
