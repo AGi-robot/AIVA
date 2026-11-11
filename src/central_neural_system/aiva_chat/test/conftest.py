@@ -2,6 +2,7 @@
 import sys
 import types
 import os
+from pathlib import Path
 
 
 if os.environ.get("AIVA_TEST_WITH_ROS") != "1" and "rclpy" not in sys.modules:
@@ -17,7 +18,7 @@ if os.environ.get("AIVA_TEST_WITH_ROS") != "1" and "rclpy" not in sys.modules:
 
 if os.environ.get("AIVA_TEST_WITH_ROS") != "1" and "cryptic_signal_core.msg" not in sys.modules:
     cryptic = types.ModuleType("cryptic_signal_core")
-    cryptic.__path__ = []
+    cryptic.__path__ = [str(Path(__file__).resolve().parents[5] / 'entity/cryptic_signal_core/cryptic_signal_core')]
     cryptic_msg = types.ModuleType("cryptic_signal_core.msg")
     cryptic_msg.TelepathicSignal = type("TelepathicSignal", (), {})
     cryptic.msg = cryptic_msg
