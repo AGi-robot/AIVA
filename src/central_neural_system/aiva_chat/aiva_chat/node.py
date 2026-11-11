@@ -264,9 +264,19 @@ class AivaChat(Node):
                 if function.get("name") != "canvas_draw":
                     raise ValueError("Unsupported drawing tool")
                 result = json.loads(function["arguments"])
-                actions.extend(validate_actions(result["actions"]))
                 if isinstance(result.get("response"), str):
                     reply = result["response"].strip()[:1000] or reply
+                requested_actions = result.get("actions", [])
+                # Some local models return an empty tool action list when asked
+                # to write on the canvas. Turn their short reply into visible
+                # canvas text instead of failing the whole request.
+                if not requested_actions:
+                    note = reply if reply != "Here is what I made for you." else text[:300]
+                    requested_actions = [{
+                        "kind": "text", "x": 90, "y": 120, "size": 32,
+                        "color": "#df78a8", "text": note,
+                    }]
+                actions.extend(validate_actions(requested_actions))
             actions = validate_actions(actions)
             self._publish({"type": "canvas_reply", "identifier": identifier, "content": reply})
             self._publish({"type": "canvas_actions", "identifier": identifier, "actions": actions})
