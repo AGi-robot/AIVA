@@ -18,7 +18,8 @@ from std_msgs.msg import String
 from ament_index_python.packages import get_package_share_directory
 
 from .memory import GraceMemory
-from .drawing import DRAW_TOOL, DRAW_INSTRUCTIONS, validate_actions
+from .drawing import (DRAW_TOOL, DRAW_INSTRUCTIONS, validate_actions,
+                      canvas_context, drawing_history, drawing_summary)
 
 
 def _load_soul() -> str:
@@ -224,6 +225,8 @@ class AivaChat(Node):
     def _draw(self, text: str, identifier: str, canvas: dict) -> None:
         """Ask the model for bounded drawing actions and send them to the Canvas page."""
         try:
+            if len(text) > 4000:
+                raise ValueError("Keep each drawing request within 4,000 characters")
             objects = canvas.get("objects", [])
             if not isinstance(objects, list) or len(objects) > 100:
                 raise ValueError("Canvas is too large for one drawing request")
@@ -237,13 +240,13 @@ class AivaChat(Node):
                 f"{self._base_url}/chat/completions",
                 json={"model": self._model, "messages": [
                     {"role": "system", "content": self._system_prompt + "\n\n" + DRAW_INSTRUCTIONS},
-                    *self._memory.recent(),
+                    *drawing_history(self._memory.recent()),
                     {"role": "user", "content": (
                         "Canvas state: "
-                        + json.dumps({"objects": objects, "selected": selected}, ensure_ascii=False)
+                        + canvas_context(objects, selected)
                         + "\n\nDrawing request: " + text
                     )},
-                ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "stream": False},
+                ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "max_tokens": 3072, "stream": False},
                 headers=headers, timeout=120,
             )
             if response.is_error:
@@ -257,7 +260,10 @@ class AivaChat(Node):
                     f"LLM returned HTTP {response.status_code}"
                     + (f": {detail}" if detail else "")
                 )
-            message = response.json()["choices"][0]["message"]
+            choice = response.json()["choices"][0]
+            if choice.get("finish_reason") == "length":
+                raise ValueError("The drawing plan exceeded the model output limit. Ask for the main shapes first, then add details.")
+            message = choice["message"]
             actions = []
             reply = "Here is what I made for you."
             for call in message.get("tool_calls", []):
@@ -289,7 +295,7 @@ class AivaChat(Node):
             actions = validate_actions(actions)
             self._publish({"type": "canvas_reply", "identifier": identifier, "content": reply})
             self._publish({"type": "canvas_actions", "identifier": identifier, "actions": actions})
-            self._memory.add_exchange(text, reply + f"\n\nPrepared {len(actions)} canvas actions (playback not confirmed): " + json.dumps(actions, ensure_ascii=False))
+            self._memory.add_exchange(text, reply + f"\n\nPrepared {len(actions)} canvas actions (playback not confirmed). Artwork summary: " + drawing_summary(actions))
             self._publish({"type": "canvas_done", "identifier": identifier})
         except Exception as error:
             self.get_logger().error(f"Canvas request failed: {error}")

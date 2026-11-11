@@ -3,7 +3,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiva_chat.drawing import validate_actions
+from aiva_chat.drawing import (
+    validate_actions, canvas_context, drawing_history, drawing_summary,
+)
 from aiva_chat.node import AivaChat
 from aiva_chat.memory import GraceMemory
 
@@ -115,3 +117,137 @@ def test_canvas_request_routes_to_drawing_worker():
     node._on_webui_input(message)
     node._pool.submit.assert_called_once_with(node._draw, 'Draw a tree', 'draw-5', {'objects': []})
     node._submit_prompt.assert_not_called()
+
+
+def test_cubic_paint_and_multistop_gradient_survive_validation():
+    artwork = {
+        'kind': 'curve', 'id': 'leaf',
+        'points': [[300, 400], [220, 280], [270, 160], [380, 140],
+                   [400, 240], [370, 340], [300, 400]],
+        'fill': True, 'stroke': False, 'gradient': 'linear', 'gradient_angle': 90,
+        'gradient_stops': [{'offset': 0, 'color': '#c4dda2'},
+                           {'offset': 0.4, 'color': '#648c55'},
+                           {'offset': 1, 'color': '#234f4a'}],
+    }
+    assert validate_actions([artwork])[0] == artwork
+    assert validate_actions([{'kind': 'style', 'id': 'title', 'font': 'serif'}])[0] == {
+        'kind': 'style', 'id': 'title', 'font': 'serif'}
+
+
+@pytest.mark.parametrize('action', [
+    {'kind': 'curve', 'points': [[0, 0]] * 3},
+    {'kind': 'curve', 'points': [[0, 0]] * 5},
+    {'kind': 'curve', 'points': [[0, 0]] * 64},
+    {'kind': 'style', 'gradient_angle': float('nan')},
+    {'kind': 'text', 'font': 'url(external)'},
+    {'kind': 'style', 'gradient_stops': [{'offset': 0, 'color': '#abcdef'}]},
+    {'kind': 'style', 'gradient_stops': [{'offset': True, 'color': '#abcdef'}] * 2},
+    {'kind': 'style', 'gradient_stops': [{'offset': float('nan'), 'color': '#abcdef'}] * 2},
+    {'kind': 'style', 'gradient_stops': [{'offset': 1.1, 'color': '#abcdef'}] * 2},
+    {'kind': 'style', 'gradient_stops': [{'offset': 0, 'color': 'red'}] * 2},
+    {'kind': 'style', 'gradient_stops': [{'offset': 1, 'color': '#abcdef'}, {'offset': 0, 'color': '#ffffff'}]},
+])
+def test_invalid_cubic_and_gradient_data_is_rejected(action):
+    with pytest.raises(ValueError):
+        validate_actions([action])
+
+
+def test_dense_art_context_stays_bounded_and_preserves_selected_object():
+    objects = validate_actions([
+        {'kind': 'path', 'id': f'stroke-{index}', 'color': '#648c55',
+         'points': [[point / 2, point / 4] for point in range(2000)]}
+        for index in range(99)
+    ] + [{'kind': 'curve', 'id': 'selected-leaf', 'points': [[20, 20], [30, 0], [60, 30], [40, 40]]}])
+    original = json.dumps(objects)
+    context = canvas_context(objects, 'selected-leaf')
+    assert len(context) <= 3600
+    parsed = json.loads(context)
+    assert parsed['object_count'] == 100
+    assert parsed['omitted_objects'] == 100 - len(parsed['objects'])
+    leaf = next(obj for obj in parsed['objects'] if obj['id'] == 'selected-leaf')
+    assert leaf['points'] == objects[-1]['points']
+    assert json.dumps(objects) == original
+    assert canvas_context(objects[:0]) == '{"objects":[],"selected":null}'
+
+
+def test_old_drawing_history_and_new_summaries_do_not_repeat_geometry():
+    actions = [{'kind': 'path', 'color': '#648c55', 'points': [[1, 2]] * 2000},
+               {'kind': 'text', 'text': 'For you', 'color': '#df78a8'}]
+    old = 'Here is a tree.\n\nPrepared 2 canvas actions (playback not confirmed): ' + json.dumps(actions)
+    history = drawing_history([
+        {'role': 'user', 'content': 'I like green trees.'},
+        {'role': 'assistant', 'content': old},
+    ])
+    assert 'I like green trees.' == history[0]['content']
+    assert 'Here is a tree.' in history[1]['content']
+    assert 'points' not in history[1]['content']
+    summary = json.loads(drawing_summary(actions))
+    assert summary['shapes'] == {'path': 1, 'text': 1}
+    assert summary['palette'] == ['#648c55', '#df78a8']
+    assert summary['writing'] == ['For you']
+    assert len(drawing_summary(actions)) < 250
+
+
+def test_truncated_model_plan_reports_actionable_error_without_painting(tmp_path, monkeypatch):
+    node = AivaChat.__new__(AivaChat)
+    node._base_url = 'http://llm.test/v1'
+    node._model = 'test'
+    node._system_prompt = 'You are Grace.'
+    node._api_key = ''
+    node._memory = GraceMemory(str(tmp_path / 'memory.sqlite'))
+    node._publish = Mock()
+    node.get_logger = Mock(return_value=Mock())
+    response = Mock(is_error=False)
+    response.json.return_value = {'choices': [{'finish_reason': 'length', 'message': {
+        'tool_calls': [{'function': {'name': 'canvas_draw', 'arguments': '{"actions":['}}]
+    }}]}
+    request = Mock(return_value=response)
+    monkeypatch.setattr('aiva_chat.node.httpx.post', request)
+    node._draw('Paint a garden', 'draw-truncated', {'objects': []})
+    events = [call.args[0] for call in node._publish.call_args_list]
+    assert [event['type'] for event in events] == ['canvas_start', 'canvas_error']
+    assert 'main shapes first' in events[-1]['content']
+    assert request.call_args.kwargs['json']['max_tokens'] == 3072
+    assert node._memory.recent() == []
+
+
+def test_canvas_summary_prioritizes_long_selected_id_and_counts_omissions():
+    ids = [f'{index:04d}' + 'a' * 60 for index in range(100)]
+    objects = validate_actions([
+        {'kind': 'path', 'id': object_id, 'points': [[point, point / 2] for point in range(100)]}
+        for object_id in ids
+    ])
+    context = canvas_context(objects, ids[0])
+    assert len(context) <= 3600
+    summary = json.loads(context)
+    assert summary['selected'] == ids[0]
+    assert summary['objects'][0]['id'] == ids[0]
+    assert summary['objects'][0]['bounds'] == [0, 0, 99, 49.5]
+    assert summary['objects'][0]['layer'] == 0
+    assert len(summary['objects']) + summary['omitted_objects'] == 100
+    assert summary['omitted_objects'] > 0
+    assert len({item['id'] for item in summary['objects']}) == len(summary['objects'])
+
+
+def test_combined_tool_calls_cannot_exceed_action_limit(tmp_path, monkeypatch):
+    node = AivaChat.__new__(AivaChat)
+    node._base_url = 'http://llm.test/v1'
+    node._model = 'test'
+    node._system_prompt = 'You are Grace.'
+    node._api_key = ''
+    node._memory = GraceMemory(str(tmp_path / 'memory.sqlite'))
+    node._publish = Mock()
+    node.get_logger = Mock(return_value=Mock())
+    response = Mock(is_error=False)
+    arguments = json.dumps({'actions': [{'kind': 'ellipse', 'x': 10, 'y': 10,
+                                        'width': 20, 'height': 20}] * 60,
+                            'response': 'Painting flowers.'})
+    response.json.return_value = {'choices': [{'finish_reason': 'tool_calls', 'message': {
+        'tool_calls': [{'function': {'name': 'canvas_draw', 'arguments': arguments}}] * 2
+    }}]}
+    monkeypatch.setattr('aiva_chat.node.httpx.post', Mock(return_value=response))
+    node._draw('Paint a garden', 'draw-limit', {'objects': []})
+    events = [call.args[0] for call in node._publish.call_args_list]
+    assert [event['type'] for event in events] == ['canvas_start', 'canvas_error']
+    assert '1 to 100 canvas actions' in events[-1]['content']
+    assert node._memory.recent() == []
