@@ -36,7 +36,7 @@ CREATE_CONTEXT_MODEL=0  # legacy Ollama context wrapper; only used with :11434 e
 # --- llama.cpp router binaries and model presets ------------------------------
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
 LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-$LLAMA_CPP_DIR/build/bin/llama-server}"
-LLAMA_ROUTER_INI="${LLAMA_ROUTER_INI:-$SCRIPT_DIR/llama-router.ini}"
+LLAMA_ROUTER_INI="${LLAMA_ROUTER_INI:-$REPO_DIR/models/llama-router.ini}"
 LLM_KEEP_ALIVE="${AIVA_LLM_KEEP_ALIVE:--1}"
 if [[ "$LLM_KEEP_ALIVE" == "-1" ]]; then
   LLM_KEEP_ALIVE_LABEL="indefinitely"
