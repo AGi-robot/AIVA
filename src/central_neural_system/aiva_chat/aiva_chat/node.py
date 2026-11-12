@@ -21,7 +21,7 @@ from ament_index_python.packages import get_package_share_directory
 from .memory import GraceMemory
 from .drawing import (DRAW_TOOL, DRAW_INSTRUCTIONS, validate_actions,
                       canvas_context, drawing_history, drawing_summary,
-                      completed_stream_actions)
+                      completed_stream_actions, repair_model_actions)
 
 
 def _load_soul() -> str:
@@ -329,7 +329,7 @@ class AivaChat(Node):
                             arguments += function.get("arguments", "") or ""
                     available = completed_stream_actions(arguments)
                     if len(available) > emitted_count:
-                        batch = validate_actions(available[emitted_count:])
+                        batch = validate_actions(repair_model_actions(available[emitted_count:]))
                         emitted_count += len(batch)
                         self._publish({"type": "canvas_actions", "identifier": identifier, "actions": batch})
 
@@ -350,7 +350,7 @@ class AivaChat(Node):
                     "kind": "text", "x": 90, "y": 120, "size": 32,
                     "color": "#df78a8", "text": note[:300],
                 }]
-            actions.extend(validate_actions(requested_actions))
+            actions.extend(validate_actions(repair_model_actions(requested_actions)))
             if not actions:
                 note = response_text.strip()[:300]
                 if not note:

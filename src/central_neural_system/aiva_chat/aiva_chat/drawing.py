@@ -65,6 +65,7 @@ provides 2–8 sorted {offset:0..1,color:"#RRGGBB"} stops. gradient_angle is deg
 Use curve for clean organic shapes: points=[start,control1,control2,end,...control1,control2,end].
 Each point is [x,y]; 1+3n points, at most 61. Fill closes the contour. Example leaf:
 {"kind":"curve","points":[[300,400],[220,280],[270,160],[380,140],[400,240],[370,340],[300,400]],"fill":true,"stroke":false,"fill_color":"#648c55"}.
+Every curve must have exactly 4, 7, 10, …, 61 points. If unsure, use a smooth path instead.
 Path/polygon join points, smooth=true rounds corners. Polygon fills automatically.
 Line uses two points. Rectangle/ellipse use x,y,width,height. Keep all geometry in bounds,
 usually inside x=35..965, y=30..620, except an intentional full-canvas background.
@@ -173,6 +174,18 @@ def validate_actions(actions):
             item['y'] = min(item['y'], 650 - height)
         result.append(item)
     return result
+
+
+def repair_model_actions(actions):
+    """Downgrade malformed model curves to smooth paths so one bad shape won't abort art."""
+    repaired = []
+    for action in actions:
+        if (isinstance(action, dict) and action.get('kind') == 'curve'
+                and isinstance(action.get('points'), list)
+                and (not 4 <= len(action['points']) <= 61 or (len(action['points']) - 1) % 3)):
+            action = {**action, 'kind': 'path', 'smooth': True}
+        repaired.append(action)
+    return repaired
 
 
 def canvas_context(objects, selected=None, max_chars=3600):

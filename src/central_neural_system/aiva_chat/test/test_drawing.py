@@ -6,6 +6,7 @@ import pytest
 
 from aiva_chat.drawing import (
     validate_actions, canvas_context, drawing_history, drawing_summary,
+    repair_model_actions,
 )
 from aiva_chat.node import AivaChat
 from aiva_chat.memory import GraceMemory
@@ -87,6 +88,14 @@ def test_paint_attributes_and_partial_style_survive_round_trip():
 def test_rejects_invalid_drawing_commands(actions):
     with pytest.raises(ValueError):
         validate_actions(actions)
+
+
+def test_model_curve_with_invalid_control_point_count_falls_back_to_smooth_path():
+    malformed = {'kind': 'curve', 'points': [[x, x] for x in range(5)], 'stroke': True}
+    repaired = validate_actions(repair_model_actions([malformed]))
+    assert repaired[0]['kind'] == 'path'
+    assert repaired[0]['smooth'] is True
+    assert len(repaired[0]['points']) == 5
 
 
 def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
