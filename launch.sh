@@ -463,6 +463,13 @@ wait_llama_health() {
 }
 
 start_llama_backends() {
+  # Only manage the bundled router when AIVA is configured to use its local
+  # port. Remote or separately managed endpoints need no local llama-server.
+  if [[ "$LLM_BASE_URL" != "http://127.0.0.1:${LLM_PORT}/v1" ]]; then
+    info "Using configured LLM endpoint $LLM_BASE_URL; skipping the local router."
+    return 0
+  fi
+
   if [[ ! -x "$LLAMA_SERVER_BIN" ]]; then
     error "llama-server not found at $LLAMA_SERVER_BIN."
     info "Build it: cmake -B $LLAMA_CPP_DIR/build -S $LLAMA_CPP_DIR && cmake --build $LLAMA_CPP_DIR/build -j"

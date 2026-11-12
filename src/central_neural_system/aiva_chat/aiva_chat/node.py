@@ -288,7 +288,7 @@ class AivaChat(Node):
                         + canvas_context(objects, selected)
                         + "\n\nDrawing request: " + text
                     )},
-                ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "max_tokens": 3072, "stream": False},
+                ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "max_tokens": 6144, "stream": False},
                 headers=headers, timeout=120,
             )
             if response.is_error:
@@ -304,7 +304,7 @@ class AivaChat(Node):
                 )
             choice = response.json()["choices"][0]
             if choice.get("finish_reason") == "length":
-                raise ValueError("The drawing plan exceeded the model output limit. Ask for the main shapes first, then add details.")
+                raise ValueError("Grace's drawing plan was cut off by the model output limit. Try a simpler first pass, then ask her to add details.")
             message = choice["message"]
             actions = []
             reply = "Here is what I made for you."

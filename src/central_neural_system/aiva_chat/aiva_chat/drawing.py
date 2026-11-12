@@ -49,7 +49,9 @@ Plan the composition, palette and light source before drawing. Work back to fron
 distant forms, main silhouette, midtones, shadows, highlights and a few focal details. Use
 negative space, perspective, balanced proportions and a clear focal point. For paintings,
 build large color masses with filled organic contours; avoid an icon made of outlined circles.
-Use 12–30 purposeful actions per pass; add detail in later requests. Max 100 actions/objects.
+Use 8–20 purposeful actions per pass; add detail in later requests. Max 100 actions/objects.
+Keep the plan compact: prefer one clean filled contour over many tiny strokes, and avoid
+repeating similar geometry. Use the available output budget for a complete, valid tool call.
 
 Pick colors appropriate to the request: muted earths, botanical greens, warm skin tones,
 rose, coral, lavender, teal or jewel tones. Respect requested monochrome palettes too.

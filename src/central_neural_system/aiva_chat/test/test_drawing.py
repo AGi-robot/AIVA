@@ -206,8 +206,8 @@ def test_truncated_model_plan_reports_actionable_error_without_painting(tmp_path
     node._draw('Paint a garden', 'draw-truncated', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
     assert [event['type'] for event in events] == ['canvas_start', 'canvas_error']
-    assert 'main shapes first' in events[-1]['content']
-    assert request.call_args.kwargs['json']['max_tokens'] == 3072
+    assert 'simpler first pass' in events[-1]['content']
+    assert request.call_args.kwargs['json']['max_tokens'] == 6144
     assert node._memory.recent() == []
 
 

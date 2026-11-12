@@ -55,6 +55,9 @@ exec sleep 60
         "AIVA_VENV": str(aiva / ".venv"),
         "AIVA_LOG_DIR": str(tmp_path / "logs"),
         "AIVA_LLM_MODEL": "test-model",
+        # The launch-service tests exercise ROS/WebUI lifecycle only; keep
+        # them independent of a local llama.cpp binary and model files.
+        "AIVA_LLM_BASE_URL": "http://llm.test/v1",
         "AIVA_PRELOAD_LLM": "0",
         "TELEPATHIC_GATEWAY": "http://127.0.0.1:9999",
         "HOME": str(tmp_path),
