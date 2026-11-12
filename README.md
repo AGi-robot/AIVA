@@ -157,3 +157,16 @@ Canvas requests use the same recent conversation memory as normal chat (the conf
 `memory_turns` window). Your prompt, Grace's written reply, and her proposed drawing plan are
 stored persistently in SQLite. The plan is recorded as unconfirmed playback; browser artwork
 is still saved locally and is not a visual memory or proof that the drawing completed.
+
+Canvas generation now uses at most three streamed passes, limited to 16, 8, then 4 actions,
+31 points per new contour, and 3,072 output tokens each. Complete actions from a
+truncated tool response are retained; continuation receives their assigned IDs
+and a compact summary so it can finish without replaying the same actions. The
+UI marks an unfinished result as a draft and keeps received actions on errors.
+`AIVA_DRAW_MAX_SECONDS` defaults to 240; this request budget is checked between
+passes and streamed events. The existing `AIVA_DRAW_TIMEOUT_SECONDS` still bounds
+idle reads, capped by the remaining request budget when each pass starts. A slow
+or stalled read can therefore end after the request budget. Neither limit changes
+the configured model context size. Interrupted plans are recorded as unconfirmed
+summaries, and raw plans in older history are shortened for both chat and Canvas
+without deleting the stored history.

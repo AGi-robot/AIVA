@@ -32,7 +32,7 @@ ACTION_SCHEMA = {
         'margin': {'type': 'number', 'description': 'Letter page margin in pixels, 0–100 (default 40)'},
         'line_height': {'type': 'number', 'description': 'Letter line spacing, 1–2 (default 1.5)'},
         'align': {'type': 'string', 'enum': ['left', 'center', 'right']},
-        'points': {'type': 'array', 'description': 'Curve: start followed by control1, control2, endpoint for each cubic segment; max 61 points. Other paths: connected points.', 'items': {'type': 'array', 'items': {'type': 'number'}, 'minItems': 2, 'maxItems': 2}},
+        'points': {'type': 'array', 'description': 'Curve: start followed by control1, control2, endpoint for each cubic segment; max 31 points per pass. Other paths: connected points.', 'maxItems': 31, 'items': {'type': 'array', 'items': {'type': 'number'}, 'minItems': 2, 'maxItems': 2}},
     },
     'required': ['kind'], 'additionalProperties': False,
 }
@@ -40,7 +40,8 @@ DRAW_TOOL = {'type': 'function', 'function': {
     'name': 'canvas_draw',
     'description': 'Draw or edit the shared canvas. Actions replay in order for the user.',
     'parameters': {'type': 'object', 'properties': {
-        'actions': {'type': 'array', 'items': ACTION_SCHEMA, 'maxItems': 100},
+        'actions': {'type': 'array', 'items': ACTION_SCHEMA, 'maxItems': 16},
+        'more': {'type': 'boolean', 'description': 'True only if another small pass is needed to finish this request'},
         'response': {'type': 'string', 'description': 'A short, friendly sentence to show beside the drawing.'},
     }, 'required': ['actions', 'response'], 'additionalProperties': False},
 }}
@@ -49,7 +50,12 @@ Plan the composition, palette and light source before drawing. Work back to fron
 distant forms, main silhouette, midtones, shadows, highlights and a few focal details. Use
 negative space, perspective, balanced proportions and a clear focal point. For paintings,
 build large color masses with filled organic contours; avoid an icon made of outlined circles.
-Use 8–20 purposeful actions per pass; add detail in later requests. Max 100 actions/objects.
+Use at most 16 purposeful actions per pass, and at most 31 points in each new contour.
+Prefer 4–10 point cubic curves to dense paths. Complete valid JSON before adding more detail.
+First establish a recognizable complete draft; later passes refine it. Set more=true only when
+another pass is needed for the user's request; false when done. There are at most three passes.
+Earlier passes are already prepared: do not repeat their actions, clear them, or reuse their ids
+for new objects. Use supplied ids to edit existing shapes. Max 100 objects in the document.
 Keep the plan compact: prefer one clean filled contour over many tiny strokes, and avoid
 repeating similar geometry. Use the available output budget for a complete, valid tool call.
 
@@ -63,9 +69,9 @@ provides 2–8 sorted {offset:0..1,color:"#RRGGBB"} stops. gradient_angle is deg
 90=down. Low opacity and brush=soft build subtle haze or shading; marker is translucent.
 
 Use curve for clean organic shapes: points=[start,control1,control2,end,...control1,control2,end].
-Each point is [x,y]; 1+3n points, at most 61. Fill closes the contour. Example leaf:
+Each point is [x,y]; 1+3n points, at most 31 per new contour. Fill closes the contour. Example leaf:
 {"kind":"curve","points":[[300,400],[220,280],[270,160],[380,140],[400,240],[370,340],[300,400]],"fill":true,"stroke":false,"fill_color":"#648c55"}.
-Every curve must have exactly 4, 7, 10, …, 61 points. If unsure, use a smooth path instead.
+Every curve must have exactly 4, 7, 10, …, 31 points per new contour. If unsure, use a smooth path instead.
 Path/polygon join points, smooth=true rounds corners. Polygon fills automatically.
 Line uses two points. Rectangle/ellipse use x,y,width,height. Keep all geometry in bounds,
 usually inside x=35..965, y=30..620, except an intentional full-canvas background.

@@ -35,6 +35,17 @@ class GraceMemoryTest(unittest.TestCase):
         with sqlite3.connect(self.database) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM conversation_turns").fetchone()[0], 4)
 
+    def test_canvas_geometry_is_shortened_in_context_but_preserved_in_storage(self):
+        memory = GraceMemory(str(self.database))
+        original = 'Here is your garden.\n\nPrepared 1 canvas actions (playback not confirmed): ' + '[{"points":' + '[1,2],' * 2000 + '[]}]'
+        memory.add_exchange('Paint a garden', original)
+        context = memory.recent()[-1]['content']
+        self.assertIn('Here is your garden.', context)
+        self.assertNotIn('points', context)
+        self.assertLess(len(context), 150)
+        with sqlite3.connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT content FROM conversation_turns WHERE role='assistant'").fetchone()[0], original)
+
     def test_conversations_are_isolated_and_exchanges_share_an_id(self):
         memory = GraceMemory(str(self.database))
         memory.add_exchange("AIVA message", "AIVA reply")

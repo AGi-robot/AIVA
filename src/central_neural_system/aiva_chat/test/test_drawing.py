@@ -249,9 +249,10 @@ def test_truncated_model_plan_reports_actionable_error_without_painting(tmp_path
     request = _mock_stream(monkeypatch, response)
     node._draw('Paint a garden', 'draw-truncated', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
-    assert [event['type'] for event in events] == ['canvas_start', 'canvas_error']
-    assert 'simpler first pass' in events[-1]['content']
-    assert request.call_args.kwargs['json']['max_tokens'] == 6144
+    assert [event['type'] for event in events] == ['canvas_start', 'canvas_progress', 'canvas_progress', 'canvas_error']
+    assert 'complete drawing action' in events[-1]['content']
+    assert request.call_count == 3
+    assert request.call_args.kwargs['json']['max_tokens'] == 3072
     assert node._memory.recent() == []
 
 
@@ -273,7 +274,7 @@ def test_canvas_summary_prioritizes_long_selected_id_and_counts_omissions():
     assert len({item['id'] for item in summary['objects']}) == len(summary['objects'])
 
 
-def test_combined_tool_calls_cannot_exceed_action_limit(tmp_path, monkeypatch):
+def test_oversized_pass_stops_at_budget_and_remembers_already_streamed_actions(tmp_path, monkeypatch):
     node = AivaChat.__new__(AivaChat)
     node._base_url = 'http://llm.test/v1'
     node._model = 'test'
@@ -293,6 +294,77 @@ def test_combined_tool_calls_cannot_exceed_action_limit(tmp_path, monkeypatch):
     _mock_stream(monkeypatch, response)
     node._draw('Paint a garden', 'draw-limit', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
-    assert [event['type'] for event in events] == ['canvas_start', 'canvas_error']
-    assert '1 to 100 canvas actions' in events[-1]['content']
-    assert node._memory.recent() == []
+    actions = [action for event in events if event['type'] == 'canvas_actions' for action in event['actions']]
+    assert len(actions) == 16
+    assert events[-1]['type'] == 'canvas_error'
+    assert '16-action pass budget' in events[-1]['content']
+    assert 'Drawing interrupted' in node._memory.recent()[-1]['content']
+
+
+def drawing_node(tmp_path):
+    node = AivaChat.__new__(AivaChat)
+    node._base_url, node._model, node._system_prompt = 'http://llm.test/v1', 'test', 'Grace'
+    node._api_key, node._draw_timeout = '', 600
+    node._memory = GraceMemory(str(tmp_path / 'memory.sqlite'))
+    node._publish = Mock()
+    node.get_logger = Mock(return_value=Mock())
+    return node
+
+
+def tool_response(actions, more=False):
+    return {'choices': [{'message': {'tool_calls': [{'function': {
+        'name': 'canvas_draw', 'arguments': json.dumps({'actions': actions, 'response': 'A garden for you.', 'more': more})
+    }}]}}]}
+
+
+def test_truncation_continues_from_complete_objects_without_duplicates(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    first = {'kind': 'ellipse', 'x': 20, 'y': 20, 'width': 50, 'height': 60}
+    truncated = {'choices': [{'finish_reason': 'length', 'message': {'tool_calls': [{'function': {
+        'name': 'canvas_draw', 'arguments': '{"actions":[' + json.dumps(first) + ',{"kind":"curve","points":['
+    }}]}}]}
+    response = Mock(is_error=False)
+    response.json.side_effect = [truncated, tool_response([{'kind': 'text', 'text': 'Garden'}])]
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Draw a garden', 'garden', {'objects': []})
+    events = [call.args[0] for call in node._publish.call_args_list]
+    actions = [a for event in events if event['type'] == 'canvas_actions' for a in event['actions']]
+    assert [a['kind'] for a in actions] == ['ellipse', 'text']
+    assert actions[0]['id'] in request.call_args_list[1].kwargs['json']['messages'][-1]['content']
+    assert request.call_count == 2
+    assert request.call_args_list[1].kwargs['json']['tools'][0]['function']['parameters']['properties']['actions']['maxItems'] == 8
+    assert events[-1] == {'type': 'canvas_done', 'identifier': 'garden', 'partial': False}
+    assert 'Prepared 2 canvas actions' in node._memory.recent()[-1]['content']
+
+
+def test_more_passes_are_bounded_and_finish_as_an_editable_draft(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    response = Mock(is_error=False)
+    response.json.side_effect = [tool_response([{'kind': 'text', 'text': f'Detail {i}'}], True) for i in range(3)]
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Paint', 'draft', {'objects': []})
+    events = [call.args[0] for call in node._publish.call_args_list]
+    assert request.call_count == 3
+    assert events[-1]['type'] == 'canvas_done' and events[-1]['partial'] is True
+    assert 'drawing budget' in events[-2]['content']
+
+
+def test_wrong_tool_never_paints_even_valid_looking_actions(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    payload = tool_response([{'kind': 'clear'}])
+    payload['choices'][0]['message']['tool_calls'][0]['function']['name'] = 'unknown'
+    response = Mock(is_error=False)
+    response.json.return_value = payload
+    _mock_stream(monkeypatch, response)
+    node._draw('Paint', 'wrong', {'objects': []})
+    assert [call.args[0]['type'] for call in node._publish.call_args_list] == ['canvas_start', 'canvas_error']
+
+
+def test_expired_time_budget_does_not_start_a_model_request(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    node._draw_max_seconds = -1
+    request = Mock()
+    monkeypatch.setattr('aiva_chat.node.httpx.stream', request)
+    node._draw('Paint', 'timeout', {'objects': []})
+    request.assert_not_called()
+    assert node._publish.call_args.args[0]['type'] == 'canvas_error'
