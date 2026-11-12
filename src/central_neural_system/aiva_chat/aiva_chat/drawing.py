@@ -238,3 +238,72 @@ def drawing_summary(actions):
                                for key in ('color', 'fill_color') if key in action))[:12]
     words = [action['text'][:160] for action in actions if action.get('text')][:4]
     return json.dumps({'shapes': counts, 'palette': colors, 'writing': words}, ensure_ascii=False)
+
+
+def completed_stream_actions(arguments):
+    """Return complete action objects from a partial canvas_draw JSON string."""
+    # Locate the root-level actions array, ignoring property-like text in strings.
+    stack = []
+    actions_start = None
+    i = 0
+    while i < len(arguments):
+        char = arguments[i]
+        if char == '"':
+            start = i
+            i += 1
+            escaped = False
+            while i < len(arguments):
+                if escaped:
+                    escaped = False
+                elif arguments[i] == "\\":
+                    escaped = True
+                elif arguments[i] == '"':
+                    break
+                i += 1
+            if i >= len(arguments):
+                break
+            end = i + 1
+            j = end
+            while j < len(arguments) and arguments[j].isspace():
+                j += 1
+            if stack == ["{"] and j < len(arguments) and arguments[j] == ":":
+                try:
+                    key = json.loads(arguments[start:end])
+                except json.JSONDecodeError:
+                    key = None
+                if key == "actions":
+                    j += 1
+                    while j < len(arguments) and arguments[j].isspace():
+                        j += 1
+                    if j < len(arguments) and arguments[j] == "[":
+                        actions_start = j
+                        break
+            i = end
+            continue
+        if char in "[{":
+            stack.append(char)
+        elif char in "]}":
+            if stack:
+                stack.pop()
+        i += 1
+
+    if actions_start is None:
+        return []
+
+    decoder = json.JSONDecoder()
+    actions = []
+    i = actions_start + 1
+    while i < len(arguments):
+        while i < len(arguments) and (arguments[i].isspace() or arguments[i] == ","):
+            i += 1
+        if i >= len(arguments) or arguments[i] == "]" or arguments[i] != "{":
+            break
+        try:
+            action, end = decoder.raw_decode(arguments, i)
+        except json.JSONDecodeError:
+            break
+        if not isinstance(action, dict):
+            break
+        actions.append(action)
+        i = end
+    return actions

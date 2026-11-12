@@ -1,4 +1,5 @@
 import json
+from contextlib import nullcontext
 from unittest.mock import Mock
 
 import pytest
@@ -8,6 +9,40 @@ from aiva_chat.drawing import (
 )
 from aiva_chat.node import AivaChat
 from aiva_chat.memory import GraceMemory
+
+
+def _mock_stream(monkeypatch, response):
+    request = Mock()
+
+    def open_stream(*args, **kwargs):
+        payload = response.json()
+        choice = payload['choices'][0]
+        message = choice.get('message', {})
+        lines = []
+        if message.get('content'):
+            lines.append('data: ' + json.dumps({'choices': [{'delta': {'content': message['content']}}]}))
+        for index, call in enumerate(message.get('tool_calls', [])):
+            function = call.get('function', {})
+            arguments = function.get('arguments', '')
+            fragments = [arguments[offset:offset + 24] for offset in range(0, len(arguments), 24)] or ['']
+            for fragment_index, fragment in enumerate(fragments):
+                delta = {'tool_calls': [{'index': index, 'function': {
+                    'name': function.get('name') if fragment_index == 0 else None,
+                    'arguments': fragment,
+                }}]}
+                lines.append('data: ' + json.dumps({'choices': [{'delta': delta}]}))
+        lines.append('data: ' + json.dumps({'choices': [{
+            'delta': {}, 'finish_reason': choice.get('finish_reason', 'tool_calls'),
+        }]}))
+        lines.append('data: [DONE]')
+        streamed = Mock(is_error=getattr(response, 'is_error', False))
+        streamed.iter_lines.return_value = iter(lines)
+        streamed.read.return_value = b''
+        return nullcontext(streamed)
+
+    request.side_effect = open_stream
+    monkeypatch.setattr('aiva_chat.node.httpx.stream', request)
+    return request
 
 
 def test_drawing_validation_bounds_coordinates_and_preserves_text():
@@ -60,6 +95,7 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     node._model = 'test'
     node._system_prompt = 'You are Grace.'
     node._api_key = ''
+    node._draw_timeout = 600
     node._memory = GraceMemory(str(tmp_path / 'memory.sqlite'))
     node._memory.add_exchange('My favorite color is coral.', 'I will remember coral.')
     node._publish = Mock()
@@ -69,14 +105,13 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     response.json.return_value = {'choices': [{'message': {'tool_calls': [{'function': {
         'name': 'canvas_draw', 'arguments': json.dumps({'actions': [{'kind': 'text', 'text': 'Hello!', 'x': 20, 'y': 30}], 'response': 'Here is a hello!'})
     }}]}}]}
-    request = Mock(return_value=response)
-    monkeypatch.setattr('aiva_chat.node.httpx.post', request)
+    request = _mock_stream(monkeypatch, response)
     node._draw('Write hello', 'draw-1', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
-    assert [event['type'] for event in events] == ['canvas_start', 'canvas_reply', 'canvas_actions', 'canvas_done']
-    assert events[1]['content'] == 'Here is a hello!'
-    assert events[1]['identifier'] == 'draw-1'
-    assert events[2]['actions'][0]['text'] == 'Hello!'
+    assert [event['type'] for event in events] == ['canvas_start', 'canvas_actions', 'canvas_reply', 'canvas_done']
+    assert events[2]['content'] == 'Here is a hello!'
+    assert events[2]['identifier'] == 'draw-1'
+    assert events[1]['actions'][0]['text'] == 'Hello!'
     assert request.call_args.kwargs['json']['tools'][0]['function']['name'] == 'canvas_draw'
     messages = request.call_args.kwargs['json']['messages']
     assert [item['role'] for item in messages] == ['system', 'user', 'assistant', 'user']
@@ -194,6 +229,7 @@ def test_truncated_model_plan_reports_actionable_error_without_painting(tmp_path
     node._model = 'test'
     node._system_prompt = 'You are Grace.'
     node._api_key = ''
+    node._draw_timeout = 600
     node._memory = GraceMemory(str(tmp_path / 'memory.sqlite'))
     node._publish = Mock()
     node.get_logger = Mock(return_value=Mock())
@@ -201,8 +237,7 @@ def test_truncated_model_plan_reports_actionable_error_without_painting(tmp_path
     response.json.return_value = {'choices': [{'finish_reason': 'length', 'message': {
         'tool_calls': [{'function': {'name': 'canvas_draw', 'arguments': '{"actions":['}}]
     }}]}
-    request = Mock(return_value=response)
-    monkeypatch.setattr('aiva_chat.node.httpx.post', request)
+    request = _mock_stream(monkeypatch, response)
     node._draw('Paint a garden', 'draw-truncated', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
     assert [event['type'] for event in events] == ['canvas_start', 'canvas_error']
@@ -235,17 +270,18 @@ def test_combined_tool_calls_cannot_exceed_action_limit(tmp_path, monkeypatch):
     node._model = 'test'
     node._system_prompt = 'You are Grace.'
     node._api_key = ''
+    node._draw_timeout = 600
     node._memory = GraceMemory(str(tmp_path / 'memory.sqlite'))
     node._publish = Mock()
     node.get_logger = Mock(return_value=Mock())
     response = Mock(is_error=False)
     arguments = json.dumps({'actions': [{'kind': 'ellipse', 'x': 10, 'y': 10,
-                                        'width': 20, 'height': 20}] * 60,
+                                        'width': 20, 'height': 20}] * 101,
                             'response': 'Painting flowers.'})
     response.json.return_value = {'choices': [{'finish_reason': 'tool_calls', 'message': {
-        'tool_calls': [{'function': {'name': 'canvas_draw', 'arguments': arguments}}] * 2
+        'tool_calls': [{'function': {'name': 'canvas_draw', 'arguments': arguments}}]
     }}]}
-    monkeypatch.setattr('aiva_chat.node.httpx.post', Mock(return_value=response))
+    _mock_stream(monkeypatch, response)
     node._draw('Paint a garden', 'draw-limit', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
     assert [event['type'] for event in events] == ['canvas_start', 'canvas_error']

@@ -20,7 +20,8 @@ from ament_index_python.packages import get_package_share_directory
 
 from .memory import GraceMemory
 from .drawing import (DRAW_TOOL, DRAW_INSTRUCTIONS, validate_actions,
-                      canvas_context, drawing_history, drawing_summary)
+                      canvas_context, drawing_history, drawing_summary,
+                      completed_stream_actions)
 
 
 def _load_soul() -> str:
@@ -75,7 +76,7 @@ class AivaChat(Node):
         self._memory = GraceMemory(memory_path, int(self.get_parameter("memory_turns").value))
         self._cryptic = CrypticSignalCore()
         self._api_key = os.getenv("AIVA_LLM_API_KEY", "")
-        self._draw_timeout = float(os.getenv("AIVA_DRAW_TIMEOUT_SECONDS", "300"))
+        self._draw_timeout = float(os.getenv("AIVA_DRAW_TIMEOUT_SECONDS", "600"))
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aiva-llm")
         self._response_pub = self.create_publisher(
             String, str(self.get_parameter("response_topic").value), 10
@@ -279,57 +280,79 @@ class AivaChat(Node):
                 selected = None
             headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
             self._publish({"type": "canvas_start", "identifier": identifier})
-            response = httpx.post(
-                f"{self._base_url}/chat/completions",
-                json={"model": self._model, "messages": [
-                    {"role": "system", "content": self._system_prompt + "\n\n" + DRAW_INSTRUCTIONS},
-                    *drawing_history(self._memory.recent()),
-                    {"role": "user", "content": (
-                        "Canvas state: "
-                        + canvas_context(objects, selected)
-                        + "\n\nDrawing request: " + text
-                    )},
-                ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "max_tokens": 6144, "stream": False},
+            request = {"model": self._model, "messages": [
+                {"role": "system", "content": self._system_prompt + "\n\n" + DRAW_INSTRUCTIONS},
+                *drawing_history(self._memory.recent()),
+                {"role": "user", "content": (
+                    "Canvas state: "
+                    + canvas_context(objects, selected)
+                    + "\n\nDrawing request: " + text
+                )},
+            ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "max_tokens": 6144, "stream": True}
+            arguments = ""
+            function_name = ""
+            response_text = ""
+            finish_reason = None
+            emitted_count = 0
+            with httpx.stream(
+                "POST", f"{self._base_url}/chat/completions", json=request,
                 headers=headers,
                 timeout=httpx.Timeout(connect=10, read=self._draw_timeout, write=30, pool=10),
-            )
-            if response.is_error:
-                # Ollama's generic HTTPStatusError string omits its response
-                # body, which often contains the actual tool/model failure.
-                detail = response.text.strip().replace("\n", " ")[:1200]
-                self.get_logger().error(
-                    f"Canvas LLM request returned HTTP {response.status_code}: {detail}"
-                )
-                raise RuntimeError(
-                    f"LLM returned HTTP {response.status_code}"
-                    + (f": {detail}" if detail else "")
-                )
-            choice = response.json()["choices"][0]
-            if choice.get("finish_reason") == "length":
+            ) as response:
+                if response.is_error:
+                    detail = response.read().decode("utf-8", errors="replace").strip()
+                    detail = detail.replace("\n", " ")[:1200]
+                    self.get_logger().error(
+                        f"Canvas LLM request returned HTTP {response.status_code}: {detail}"
+                    )
+                    raise RuntimeError(
+                        f"LLM returned HTTP {response.status_code}"
+                        + (f": {detail}" if detail else "")
+                    )
+                for line in response.iter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    for choice in chunk.get("choices", []):
+                        finish_reason = choice.get("finish_reason") or finish_reason
+                        delta = choice.get("delta", {})
+                        response_text += delta.get("content", "") or ""
+                        for call in delta.get("tool_calls", []):
+                            function = call.get("function", {})
+                            function_name = function.get("name") or function_name
+                            arguments += function.get("arguments", "") or ""
+                    available = completed_stream_actions(arguments)
+                    if len(available) > emitted_count:
+                        batch = validate_actions(available[emitted_count:])
+                        emitted_count += len(batch)
+                        self._publish({"type": "canvas_actions", "identifier": identifier, "actions": batch})
+
+            if finish_reason == "length":
                 raise ValueError("Grace's drawing plan was cut off by the model output limit. Try a simpler first pass, then ask her to add details.")
-            message = choice["message"]
+            if function_name and function_name != "canvas_draw":
+                raise ValueError("Unsupported drawing tool")
+            result = json.loads(arguments) if arguments else {}
             actions = []
             reply = "Here is what I made for you."
-            for call in message.get("tool_calls", []):
-                function = call.get("function", {})
-                if function.get("name") != "canvas_draw":
-                    raise ValueError("Unsupported drawing tool")
-                result = json.loads(function["arguments"])
-                if isinstance(result.get("response"), str):
-                    reply = result["response"].strip()[:1000] or reply
-                requested_actions = result.get("actions", [])
-                # Some local models return an empty tool action list when asked
-                # to write on the canvas. Turn their short reply into visible
-                # canvas text instead of failing the whole request.
-                if not requested_actions:
-                    note = reply if reply != "Here is what I made for you." else text[:300]
-                    requested_actions = [{
-                        "kind": "text", "x": 90, "y": 120, "size": 32,
-                        "color": "#df78a8", "text": note,
-                    }]
-                actions.extend(validate_actions(requested_actions))
+            if isinstance(result.get("response"), str):
+                reply = result["response"].strip()[:1000] or reply
+            requested_actions = result.get("actions", [])
+            # Some local models return no tool actions when asked to write text.
+            if not requested_actions:
+                note = reply if reply != "Here is what I made for you." else (response_text.strip() or text[:300])
+                requested_actions = [{
+                    "kind": "text", "x": 90, "y": 120, "size": 32,
+                    "color": "#df78a8", "text": note[:300],
+                }]
+            actions.extend(validate_actions(requested_actions))
             if not actions:
-                note = str(message.get("content") or "").strip()[:300]
+                note = response_text.strip()[:300]
                 if not note:
                     note = text[:300] or "A little note for you."
                 actions = validate_actions([{
@@ -338,7 +361,8 @@ class AivaChat(Node):
                 }])
             actions = validate_actions(actions)
             self._publish({"type": "canvas_reply", "identifier": identifier, "content": reply})
-            self._publish({"type": "canvas_actions", "identifier": identifier, "actions": actions})
+            if emitted_count < len(actions):
+                self._publish({"type": "canvas_actions", "identifier": identifier, "actions": actions[emitted_count:]})
             self._memory.add_exchange(
                 text,
                 reply + f"\n\nPrepared {len(actions)} canvas actions (playback not confirmed). "
