@@ -46,10 +46,10 @@ class AivaChat(Node):
         self.declare_parameter("input_topic", "/telepathic/stimulus")
         self.declare_parameter("webui_input_topic", "/aiva/chat_input")
         self.declare_parameter("response_topic", "/tms/text_response")
-        self.declare_parameter("llm_base_url", os.getenv("AIVA_LLM_BASE_URL", "http://127.0.0.1:11434/v1"))
+        self.declare_parameter("llm_base_url", os.getenv("AIVA_LLM_BASE_URL", "http://127.0.0.1:8080/v1"))
         self.declare_parameter(
             "llm_model",
-            os.getenv("AIVA_LLM_MODEL", "aiva-ministral-3-8b-ctx25600"),
+            os.getenv("AIVA_LLM_MODEL", "ministral-3-14b-instruct-2512"),
         )
         self.declare_parameter("system_prompt", _load_soul())
         self.declare_parameter("agi_home", os.getenv("AGI_HOME", "~/.agi"))

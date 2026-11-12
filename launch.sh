@@ -23,21 +23,20 @@ TELEPATHIC_CONSOLE_PORTAL="${TELEPATHIC_CONSOLE_PORTAL:-8853}"
 TELEPATHIC_GATEWAY="${TELEPATHIC_GATEWAY:-http://${TELEPATHIC_CONSOLE_HOST}:${TELEPATHIC_CONSOLE_PORTAL}}"
 
 START_CHAT="${AIVA_START_CHAT:-1}"
-LLM_BASE_URL="${AIVA_LLM_BASE_URL:-http://127.0.0.1:11434/v1}"
+# Grace runs on a single llama.cpp router: one llama-server process serves
+# chat/vision (Ministral) and embeddings (voyage-4-nano) on one port,
+# routing by the request's "model" name (AIVA/llama-router.ini).
+LLM_PORT="${AIVA_LLM_PORT:-8080}"
+LLM_BASE_URL="${AIVA_LLM_BASE_URL:-http://127.0.0.1:${LLM_PORT}/v1}"
+EMBED_BASE_URL="${AIVA_EMBED_BASE_URL:-$LLM_BASE_URL}"
 LLM_NUM_CTX="${AIVA_LLM_NUM_CTX:-25600}"
-LLM_SOURCE_MODEL="${AIVA_LLM_SOURCE_MODEL:-hf.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF:UD-Q4_K_XL}"
-CREATE_CONTEXT_MODEL=0
-if [[ -n "${AIVA_LLM_MODEL:-}" ]]; then
-  LLM_MODEL="$AIVA_LLM_MODEL"
-  # The generated context wrapper can also be selected explicitly. Treat it
-  # as a wrapper to create, rather than assuming it already exists in Ollama.
-  if [[ "$LLM_MODEL" == "aiva-ministral-3-8b-ctx${LLM_NUM_CTX}" ]]; then
-    CREATE_CONTEXT_MODEL=1
-  fi
-else
-  LLM_MODEL="aiva-ministral-3-8b-ctx${LLM_NUM_CTX}"
-  CREATE_CONTEXT_MODEL=1
-fi
+LLM_MODEL="${AIVA_LLM_MODEL:-ministral-3-14b-instruct-2512}"
+CREATE_CONTEXT_MODEL=0  # legacy Ollama context wrapper; only used with :11434 endpoints
+
+# --- llama.cpp router binaries and model presets ------------------------------
+LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
+LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-$LLAMA_CPP_DIR/build/bin/llama-server}"
+LLAMA_ROUTER_INI="${LLAMA_ROUTER_INI:-$SCRIPT_DIR/llama-router.ini}"
 LLM_KEEP_ALIVE="${AIVA_LLM_KEEP_ALIVE:--1}"
 if [[ "$LLM_KEEP_ALIVE" == "-1" ]]; then
   LLM_KEEP_ALIVE_LABEL="indefinitely"
@@ -48,8 +47,11 @@ PRELOAD_LLM="${AIVA_PRELOAD_LLM:-1}"
 AGI_HOME="${AGI_HOME:-$HOME/.agi}"
 LOG_DIR="${AIVA_LOG_DIR:-$AGI_HOME/log}"
 export AGI_HOME AGI_LOG_DIR="$LOG_DIR" ROS_LOG_DIR="$LOG_DIR/ros"
+# llama-server's shared libraries (libllama-*.so) live next to the binary.
+export LD_LIBRARY_PATH="$LLAMA_CPP_DIR/build/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export AIVA_LLM_BASE_URL="$LLM_BASE_URL"
 export AIVA_LLM_MODEL="$LLM_MODEL"
+export AIVA_EMBED_BASE_URL="$EMBED_BASE_URL"
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
   C_RESET=$'\033[0m'
@@ -111,7 +113,7 @@ run_spinner() {
 
 printf '\n%s╭──────────────────────────────────────╮\n' "$C_MAGENTA"
 printf '│  %s✦ AIVA%s  %sGrace companion startup%s     │\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
-printf '│  %sROS 2%s  ·  %sOllama%s  ·  %sWebUI%s          │\n' "$C_CYAN" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_MAGENTA" "$C_RESET"
+printf '│  %sROS 2%s  ·  %sllama.cpp%s  ·  %sWebUI%s        │\n' "$C_CYAN" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_MAGENTA" "$C_RESET"
 printf '╰──────────────────────────────────────╯%s\n\n' "$C_RESET"
 
 if [[ ! -f "$ROS_SETUP" ]]; then
@@ -302,6 +304,7 @@ fi
 pids=()
 service_names=()
 service_has_session=()
+LLM_UNITS_STARTED=0
 start_service() {
   local name="$1"
   shift
@@ -319,6 +322,12 @@ start_service() {
 
 cleanup() {
   trap - EXIT INT TERM
+  # Release Grace's models if this launch loaded them, so the GPUs are free
+  # between sessions. Units started outside the launch are left alone.
+  if [[ "$LLM_UNITS_STARTED" == "1" ]] && command -v systemctl >/dev/null 2>&1; then
+    info "Unloading the llama.cpp router (systemd unit)."
+    systemctl --user stop agi-llm-router.service 2>/dev/null || true
+  fi
   local index pid attempt
   # Stop every service group first so ROS wrappers and their Python children
   # all receive the signal, then give them a short chance to release sockets.
@@ -390,6 +399,79 @@ trap 'handle_signal INT' INT
 trap 'handle_signal TERM' TERM
 
 stage "03 / 04" "Start AIVA services"
+
+# Start the llama.cpp backends unless their ports are already served (for
+# example by a manually launched llama-server). External listeners are left
+# untouched and not tracked, so cleanup never kills processes it didn't start.
+port_busy() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$1" && exec 3>&- 3<&-) 2>/dev/null
+}
+
+wait_llama_health() {
+  local port="$1" timeout="$2" started=$SECONDS
+  while true; do
+    curl -sf "http://127.0.0.1:$port/health" >/dev/null 2>&1 && return 0
+    (( SECONDS - started < timeout )) || return 1
+    sleep 1
+  done
+}
+
+start_llama_backends() {
+  if [[ ! -x "$LLAMA_SERVER_BIN" ]]; then
+    error "llama-server not found at $LLAMA_SERVER_BIN."
+    info "Build it: cmake -B $LLAMA_CPP_DIR/build -S $LLAMA_CPP_DIR && cmake --build $LLAMA_CPP_DIR/build -j"
+    return 1
+  fi
+
+  # Prefer the systemd user units when present: systemd supervises the
+  # llama-server processes (restart on crash, journald logs) while Grace owns
+  # their lifecycle -- the units load here and unload in cleanup, so the GPUs
+  # are free between Grace sessions.
+  local have_units=0
+  if command -v systemctl >/dev/null 2>&1 && \
+     systemctl --user cat agi-llm-router.service >/dev/null 2>&1; then
+    have_units=1
+  fi
+
+  if [[ "$have_units" == 1 ]]; then
+    if port_busy "$LLM_PORT"; then
+      info "Port $LLM_PORT already serves the router; reusing it."
+      return 0
+    fi
+    if [[ ! -f "$LLAMA_ROUTER_INI" ]]; then
+      error "Router preset not found: $LLAMA_ROUTER_INI"
+      return 1
+    fi
+    info "Loading Grace's models via systemd  ${C_DIM}· router :$LLM_PORT${C_RESET}"
+    systemctl --user start agi-llm-router.service
+    LLM_UNITS_STARTED=1
+    if ! wait_llama_health "$LLM_PORT" 240; then
+      error "llama.cpp router did not become healthy; check: journalctl --user -u agi-llm-router"
+      return 1
+    fi
+    success "Router ready  ${C_DIM}(Ministral-3-14B + voyage-4-nano · :$LLM_PORT)${C_RESET}"
+    return 0
+  fi
+
+  # Fallback when the systemd unit is absent: spawn the router directly
+  # as a child service so cleanup still tears it down.
+  if [[ "$LLM_BASE_URL" == "http://127.0.0.1:${LLM_PORT}/v1" ]]; then
+    if port_busy "$LLM_PORT"; then
+      info "Port $LLM_PORT already serves the router; reusing it."
+    else
+      if [[ ! -f "$LLAMA_ROUTER_INI" ]]; then
+        error "Router preset not found: $LLAMA_ROUTER_INI"
+        return 1
+      fi
+      info "Router preset: $LLAMA_ROUTER_INI  ${C_DIM}· port: $LLM_PORT${C_RESET}"
+      start_service llama-router "$LLAMA_SERVER_BIN" \
+        --models-preset "$LLAMA_ROUTER_INI" --models-max 2 \
+        --port "$LLM_PORT"
+    fi
+  fi
+}
+start_llama_backends
+
 start_service rosbridge ros2 launch rosbridge_server rosbridge_websocket_launch.xml address:=127.0.0.1
 start_service log-collector ros2 run agi_logging agi_log_collector
 if [[ "$START_CHAT" == "1" ]]; then
