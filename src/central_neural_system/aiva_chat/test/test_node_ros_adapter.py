@@ -70,6 +70,8 @@ def test_streamed_llm_reply_is_published_and_persisted(tmp_path, monkeypatch):
         {"role": "assistant", "content": "Hello from Grace"},
     ]
     assert json.loads(node._response_pub.publish.call_args_list[-1].args[0].data)["radio_id"] == "request-42"
+    assert all(json.loads(call.args[0].data)["radio_id"] == "request-42"
+               for call in node._response_pub.publish.call_args_list)
 
 
 def test_empty_llm_stream_reports_error_and_does_not_save_exchange(tmp_path, monkeypatch):
@@ -80,6 +82,7 @@ def test_empty_llm_stream_reports_error_and_does_not_save_exchange(tmp_path, mon
 
     event = json.loads(node._response_pub.publish.call_args_list[-1].args[0].data)
     assert event["type"] == "error"
+    assert event["radio_id"] == "request-43"
     assert node._memory.recent() == []
 
 
