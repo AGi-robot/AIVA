@@ -113,7 +113,7 @@ run_spinner() {
 
 printf '\n%s╭──────────────────────────────────────╮\n' "$C_MAGENTA"
 printf '│  %s✦ AIVA%s  %sGrace companion startup%s     │\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
-printf '│  %sROS 2%s  ·  %sllama.cpp%s  ·  %sWebUI%s        │\n' "$C_CYAN" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_MAGENTA" "$C_RESET"
+printf '│  %sROS 2%s  ·  %sllama.cpp%s  ·  %sWebUI%s       │\n' "$C_CYAN" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_MAGENTA" "$C_RESET"
 printf '╰──────────────────────────────────────╯%s\n\n' "$C_RESET"
 
 if [[ ! -f "$ROS_SETUP" ]]; then
@@ -213,6 +213,9 @@ import sys
 
 try:
     with socket.socket() as probe:
+        # Recently closed TCP connections can remain in TIME_WAIT without a
+        # listener; allow address reuse while still detecting active servers.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind(("127.0.0.1", 9090))
 except OSError as error:
     print(f"AIVA rosbridge cannot bind to 127.0.0.1:9090: {error}", file=sys.stderr)
@@ -322,25 +325,20 @@ start_service() {
 
 cleanup() {
   trap - EXIT INT TERM
-  # Release Grace's models if this launch loaded them, so the GPUs are free
-  # between sessions. Units started outside the launch are left alone.
-  if [[ "$LLM_UNITS_STARTED" == "1" ]] && command -v systemctl >/dev/null 2>&1; then
-    info "Unloading the llama.cpp router (systemd unit)."
-    systemctl --user stop agi-llm-router.service 2>/dev/null || true
-  fi
   local index pid attempt
-  # Stop every service group first so ROS wrappers and their Python children
-  # all receive the signal, then give them a short chance to release sockets.
+  # ros2 launch handles SIGINT by shutting down its child nodes. Send it to
+  # each isolated service group first, just as an interactive Ctrl+C would.
   for index in "${!pids[@]}"; do
     pid="${pids[$index]}"
     if [[ "${service_has_session[$index]}" == "1" ]]; then
-      kill -TERM -- "-$pid" 2>/dev/null || true
+      kill -INT -- "-$pid" 2>/dev/null || true
     else
-      kill -TERM "$pid" 2>/dev/null || true
+      kill -INT "$pid" 2>/dev/null || true
     fi
   done
 
-  for attempt in {1..20}; do
+  # Give the ROS launchers up to three seconds to stop nodes and close sockets.
+  for attempt in {1..30}; do
     local any_alive=0
     for index in "${!pids[@]}"; do
       pid="${pids[$index]}"
@@ -354,7 +352,30 @@ cleanup() {
     sleep 0.1
   done
 
-  # A service that ignores TERM must not leave the WebUI port occupied.
+  # Escalate only for services that ignored the normal ROS shutdown signal.
+  for index in "${!pids[@]}"; do
+    pid="${pids[$index]}"
+    if [[ "${service_has_session[$index]}" == "1" ]]; then
+      kill -TERM -- "-$pid" 2>/dev/null || true
+    else
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+  for attempt in {1..10}; do
+    local any_alive=0
+    for index in "${!pids[@]}"; do
+      pid="${pids[$index]}"
+      if [[ "${service_has_session[$index]}" == "1" ]]; then
+        kill -0 -- "-$pid" 2>/dev/null && any_alive=1
+      else
+        kill -0 "$pid" 2>/dev/null && any_alive=1
+      fi
+    done
+    [[ "$any_alive" == "0" ]] && break
+    sleep 0.1
+  done
+
+  # A service that ignores both signals must not remain behind.
   for index in "${!pids[@]}"; do
     pid="${pids[$index]}"
     if [[ "${service_has_session[$index]}" == "1" ]]; then
@@ -366,6 +387,31 @@ cleanup() {
   for pid in "${pids[@]}"; do
     wait "$pid" 2>/dev/null || true
   done
+
+  # Release Grace's models after ROS services stop; units started outside this
+  # launch are left alone.
+  if [[ "$LLM_UNITS_STARTED" == "1" ]] && command -v systemctl >/dev/null 2>&1; then
+    info "Unloading the llama.cpp router (systemd unit)."
+    systemctl --user stop agi-llm-router.service 2>/dev/null || true
+  fi
+
+  # Confirm rosbridge has released its fixed local WebSocket port as well.
+  if ! "$AIVA_ROS_PYTHON" - <<'PY'
+import socket
+
+try:
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind(("127.0.0.1", 9090))
+except OSError:
+    raise SystemExit(1)
+PY
+  then
+    warn "Port 9090 is still occupied after stopping AIVA services."
+    info "Check the remaining listener with: sudo ss -ltnp 'sport = :9090'"
+  else
+    success "AIVA rosbridge stopped; port 9090 is free."
+  fi
 
   # Confirm the listener has released the configured WebUI address.
   if ! "$AIVA_ROS_PYTHON" - "$TELEPATHIC_CONSOLE_HOST" "$TELEPATHIC_CONSOLE_PORTAL" <<'PY'
