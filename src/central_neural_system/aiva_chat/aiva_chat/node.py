@@ -75,6 +75,7 @@ class AivaChat(Node):
         self._memory = GraceMemory(memory_path, int(self.get_parameter("memory_turns").value))
         self._cryptic = CrypticSignalCore()
         self._api_key = os.getenv("AIVA_LLM_API_KEY", "")
+        self._draw_timeout = float(os.getenv("AIVA_DRAW_TIMEOUT_SECONDS", "300"))
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aiva-llm")
         self._response_pub = self.create_publisher(
             String, str(self.get_parameter("response_topic").value), 10
@@ -289,7 +290,8 @@ class AivaChat(Node):
                         + "\n\nDrawing request: " + text
                     )},
                 ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "max_tokens": 6144, "stream": False},
-                headers=headers, timeout=120,
+                headers=headers,
+                timeout=httpx.Timeout(connect=10, read=self._draw_timeout, write=30, pool=10),
             )
             if response.is_error:
                 # Ollama's generic HTTPStatusError string omits its response
@@ -344,8 +346,15 @@ class AivaChat(Node):
             )
             self._publish({"type": "canvas_done", "identifier": identifier})
         except Exception as error:
-            self.get_logger().error(f"Canvas request failed: {error}")
-            self._publish({"type": "canvas_error", "identifier": identifier, "content": str(error)})
+            if isinstance(error, httpx.TimeoutException):
+                detail = (
+                    f"The drawing request timed out after {self._draw_timeout:g} seconds. "
+                    "Try a simpler request or check whether the model is still responding."
+                )
+            else:
+                detail = str(error)
+            self.get_logger().error(f"Canvas request failed: {detail}")
+            self._publish({"type": "canvas_error", "identifier": identifier, "content": detail})
 
     def destroy_node(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
