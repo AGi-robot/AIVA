@@ -233,16 +233,21 @@ class AivaChat(Node):
                 selected = None
             headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
             self._publish({"type": "canvas_start", "identifier": identifier})
+            messages = [{
+                "role": "system",
+                "content": self._system_prompt + "\n\n" + DRAW_INSTRUCTIONS,
+            }]
+            messages.extend(self._memory.recent())
+            # Keep canvas state and the request together as one user turn. This
+            # preserves role alternation required by some local model templates.
+            messages.append({"role": "user", "content": (
+                "Canvas state: "
+                + json.dumps({"objects": objects, "selected": selected}, ensure_ascii=False)
+                + "\n\nDrawing request: " + text
+            )})
             response = httpx.post(
                 f"{self._base_url}/chat/completions",
-                json={"model": self._model, "messages": [
-                    {"role": "system", "content": self._system_prompt + "\n\n" + DRAW_INSTRUCTIONS},
-                    {"role": "user", "content": (
-                        "Canvas state: "
-                        + json.dumps({"objects": objects, "selected": selected}, ensure_ascii=False)
-                        + "\n\nDrawing request: " + text
-                    )},
-                ], "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "stream": False},
+                json={"model": self._model, "messages": messages, "tools": [DRAW_TOOL], "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}}, "stream": False},
                 headers=headers, timeout=120,
             )
             if response.is_error:
@@ -288,7 +293,7 @@ class AivaChat(Node):
             actions = validate_actions(actions)
             self._publish({"type": "canvas_reply", "identifier": identifier, "content": reply})
             self._publish({"type": "canvas_actions", "identifier": identifier, "actions": actions})
-            self._memory.add_exchange(text, f"Prepared {len(actions)} canvas actions: " + json.dumps(actions, ensure_ascii=False))
+            self._memory.add_exchange(text, f"I drew on the shared Canvas: {reply}")
             self._publish({"type": "canvas_done", "identifier": identifier})
         except Exception as error:
             self.get_logger().error(f"Canvas request failed: {error}")
