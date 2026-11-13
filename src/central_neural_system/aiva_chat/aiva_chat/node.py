@@ -23,7 +23,7 @@ from std_msgs.msg import String
 from ament_index_python.packages import get_package_share_directory
 
 from .memory import GraceMemory
-from .moss import MossClient, MossPaintError, paint_size
+from .moss import MossClient, paint_size
 from .drawing import (DRAW_TOOL, DRAW_INSTRUCTIONS, PAINT_INSTRUCTIONS, validate_actions,
                       canvas_context, drawing_history, drawing_summary,
                       completed_stream_actions, repair_model_actions)
@@ -397,17 +397,13 @@ class AivaChat(Node):
         placement_w = action.get('width') or 512
         placement_h = action.get('height') or 512
         generation_w, generation_h = paint_size(placement_w, placement_h)
-        try:
-            png = self._paint.generate(str(action.get('prompt', '')), generation_w, generation_h)
-        except MossPaintError as error:
-            self.get_logger().error(f"Painting failed: {error}")
-            self._publish({"type": "canvas_image_error", "identifier": identifier,
-                           "id": action.get('id', ''),
-                           "content": f"Grace could not paint that image: {error}"[:300]})
-            return
+        self._publish({"type": "canvas_progress", "identifier": identifier,
+                       "content": "Grace is generating your painting…"})
+        png = self._paint.generate(str(action.get('prompt', '')), generation_w, generation_h)
         self._publish({
             "type": "canvas_image", "identifier": identifier, "id": action.get('id', ''),
             "src": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
+            "prompt": action.get("prompt", ""),
             "x": action.get('x', 0), "y": action.get('y', 0),
             "width": placement_w, "height": placement_h,
             "size": [generation_w, generation_h],
@@ -431,7 +427,7 @@ class AivaChat(Node):
             objects = canvas.get("objects", [])
             if not isinstance(objects, list) or len(objects) > 100:
                 raise ValueError("Canvas is too large for one drawing request")
-            objects = validate_actions(objects) if objects else []
+            objects = validate_actions(objects, allow_image_layers=True) if objects else []
             selected = canvas.get("selected")
             if not isinstance(selected, str) or selected not in {obj.get("id") for obj in objects}:
                 selected = None
@@ -449,6 +445,7 @@ class AivaChat(Node):
                 r"\b(write|writing|text|caption|label|letter|word|title|quote|sign|explain)\b",
                 text, flags=re.IGNORECASE))
             more = False
+            paints_left = 2
             pass_action_limits = (16, 10, 8, 6)
             for pass_index in range(len(pass_action_limits)):
                 if perf_counter() >= deadline:
@@ -478,15 +475,25 @@ class AivaChat(Node):
                         + f"\nVisual refinement pass {pass_index + 1} of 4.",
                         observed)
                     _append_user_content(messages, followup)
-                batch, note, more, paints = self._drawing_pass(
+                note, more, deferred = self._drawing_pass(
                     messages, identifier, prepared, deadline, pass_action_limits[pass_index],
-                    allow_canvas_text=allow_canvas_text, allow_paints=paints_on)
-                if paints:
-                    # A raster painting takes tens of seconds; extend the budget
-                    # for the generation itself, then publish each result.
-                    deadline = max(deadline, perf_counter() + self._paint.timeout + 30)
-                    for action in paints:
+                    allow_canvas_text=allow_canvas_text, allow_paints=paints_on,
+                    paint_budget=paints_left)
+                # Preserve action order. Once the model requests a painting, later
+                # overlays and edits wait for its bitmap instead of hiding beneath it.
+                painting_started = perf_counter()
+                for action in deferred:
+                    if action['kind'] == 'image':
+                        paints_left -= 1
                         self._run_paint(identifier, action)
+                    else:
+                        self._publish({"type": "canvas_actions", "identifier": identifier,
+                                       "actions": [action]})
+                    prepared.append(action)
+                if deferred:
+                    # Image generation has its own timeout; leave the remaining
+                    # planning budget intact instead of charging it for GPU time.
+                    deadline += perf_counter() - painting_started
                 if note:
                     reply = note
                 quality_incomplete = not objects and not allow_canvas_text \
@@ -523,10 +530,14 @@ class AivaChat(Node):
             self._publish({"type": "canvas_error", "identifier": identifier, "content": detail})
 
     def _drawing_pass(self, messages, identifier, prepared, deadline, action_limit,
-                      allow_canvas_text=True, allow_paints=False):
+                      allow_canvas_text=True, allow_paints=False, paint_budget=2):
         """Only publish complete, validated actions; never replay a truncated JSON suffix."""
         tool = deepcopy(DRAW_TOOL)
-        tool['function']['parameters']['properties']['actions']['maxItems'] = action_limit
+        schema = tool['function']['parameters']['properties']['actions']
+        schema['maxItems'] = action_limit
+        if not allow_paints or paint_budget == 0:
+            schema['items']['properties']['kind']['enum'].remove('image')
+            schema['items']['properties'].pop('prompt', None)
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         has_images = any(isinstance(message.get("content"), list) for message in messages)
         retry_without_vision = False
@@ -535,14 +546,15 @@ class AivaChat(Node):
         response_text = ""
         finish_reason = None
         emitted = []
-        paints: list[dict] = []
+        deferred: list[dict] = []
+        paint_count = 0
         seen_count = 0
         target_kinds = {'select', 'move', 'delete', 'style', 'front', 'back'}
         last_target_id = next((action.get('id') for action in reversed(prepared)
                                if action.get('id') and action.get('kind') not in target_kinds), None)
 
         def publish_new(actions):
-            nonlocal last_target_id, seen_count
+            nonlocal last_target_id, seen_count, paint_count
             if len(actions) > action_limit:
                 raise ValueError(f"Grace exceeded the {action_limit}-action pass budget. Ask for a smaller detail.")
             unseen = actions[seen_count:]
@@ -571,16 +583,21 @@ class AivaChat(Node):
                 elif action['kind'] == 'clear':
                     last_target_id = None
             if batch:
-                vectors = [action for action in batch if action['kind'] != 'image']
-                # Painted images travel in their own event: the bitmap never
-                # passes through the model, so it cannot ride canvas_actions.
+                vectors = []
                 for action in batch:
                     if action['kind'] == 'image':
-                        paints.append(action)
+                        paint_count += 1
+                        if paint_count > paint_budget:
+                            raise ValueError("Use at most two paintings per request")
+                    if deferred or action['kind'] == 'image':
+                        deferred.append(action)
+                    else:
+                        vectors.append(action)
                 emitted.extend(batch)
-                prepared.extend(batch)
                 if vectors:
-                    self._publish({"type": "canvas_actions", "identifier": identifier, "actions": vectors})
+                    prepared.extend(vectors)
+                    self._publish({"type": "canvas_actions", "identifier": identifier,
+                                   "actions": vectors})
 
         while True:
             request = {"model": self._model,
@@ -631,11 +648,11 @@ class AivaChat(Node):
                         publish_new(completed_stream_actions(arguments))
             break
         if finish_reason == 'length':
-            return emitted, "", True, paints
+            return "", True, deferred
         try:
             result = json.loads(arguments) if arguments else {}
         except json.JSONDecodeError:
-            return emitted, "", True, paints
+            return "", True, deferred
         if not isinstance(result, dict):
             raise ValueError("Invalid drawing tool arguments")
         note = result.get('response')
@@ -647,12 +664,12 @@ class AivaChat(Node):
             actions = [{'kind': 'text', 'x': 90, 'y': 120, 'size': 32, 'color': '#df78a8',
                         'text': (note or response_text.strip())[:300]}]
         publish_new(actions)
-        return emitted, note, result.get('more') is True, paints
+        return note, result.get('more') is True, deferred
 
     def destroy_node(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
         if getattr(self, "_paint", None) is not None:
-            threading.Thread(target=self._paint.close, daemon=True).start()
+            self._paint.close()
         super().destroy_node()
 
 

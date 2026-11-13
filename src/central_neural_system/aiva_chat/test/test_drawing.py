@@ -631,9 +631,10 @@ def test_paint_failure_reports_the_error_and_keeps_the_drawing(tmp_path, monkeyp
     _mock_stream(monkeypatch, response)
     node._draw('Paint a castle', 'paint-3', {'objects': []})
     published = [call.args[0] for call in node._publish.call_args_list]
-    errors = [event for event in published if event['type'] == 'canvas_image_error']
+    errors = [event for event in published if event['type'] == 'canvas_error']
     assert len(errors) == 1 and 'out of memory' in errors[0]['content']
-    assert published[-1]['type'] == 'canvas_done'
+    assert published[-1]['type'] == 'canvas_error'
+    assert not any(event['type'] in ('canvas_done', 'canvas_image') for event in published)
 
 
 def test_an_image_only_request_does_not_loop_refinements():
@@ -641,3 +642,55 @@ def test_an_image_only_request_does_not_loop_refinements():
         {'kind': 'image', 'prompt': 'a portrait', 'x': 100, 'y': 50, 'width': 400, 'height': 500},
     ]) is False
     assert _draft_needs_refinement([{'kind': 'ellipse', 'x': 0, 'y': 0}]) is True
+
+
+def test_painting_keeps_overlays_above_the_bitmap(tmp_path, monkeypatch):
+    node = paint_node(tmp_path)
+    response = Mock(is_error=False)
+    response.json.return_value = tool_response([
+        {'kind': 'rectangle', 'id': 'background', 'width': 1000, 'height': 650},
+        {'kind': 'image', 'id': 'painting', 'prompt': 'a red apple'},
+        {'kind': 'text', 'id': 'caption', 'text': 'Apple', 'x': 40, 'y': 40},
+        {'kind': 'move', 'id': 'painting', 'dx': 10},
+    ])
+    _mock_stream(monkeypatch, response)
+    node._draw('Paint an apple and write a caption', 'ordered', {'objects': []})
+    order = []
+    for call in node._publish.call_args_list:
+        event = call.args[0]
+        if event['type'] == 'canvas_image':
+            order.append(event['id'])
+        elif event['type'] == 'canvas_actions':
+            order.extend(a.get('id') for a in event['actions'])
+    assert order == ['background', 'painting', 'caption', 'painting']
+
+
+def test_existing_painted_layers_do_not_block_later_requests(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    response = Mock(is_error=False)
+    response.json.return_value = tool_response([{'kind': 'move', 'id': 'old-picture', 'dx': 20}])
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Move the picture right', 'edit-picture', {'objects': [
+        {'kind': 'image', 'id': 'old-picture', 'src': 'data:image/png;base64,AAAA',
+         'x': 0, 'y': 0, 'width': 512, 'height': 512}]})
+    assert node._publish.call_args.args[0]['type'] == 'canvas_done'
+    context = request.call_args.kwargs['json']['messages'][-1]['content']
+    assert 'old-picture' in context and 'data:image/' not in context
+
+
+def test_painting_limit_is_enforced_across_passes(tmp_path, monkeypatch):
+    node = paint_node(tmp_path)
+    payloads = iter([
+        tool_response([{'kind': 'image', 'prompt': 'a flower'}], more=True),
+        tool_response([{'kind': 'image', 'prompt': 'a tree'}], more=True),
+        tool_response([{'kind': 'image', 'prompt': 'a mountain'}]),
+    ])
+    response = Mock(is_error=False)
+    response.json.side_effect = lambda: next(payloads)
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Paint a landscape', 'limited', {'objects': []})
+    assert node._paint.generate.call_count == 2
+    assert node._publish.call_args.args[0]['type'] == 'canvas_error'
+    assert 'two paintings' in node._publish.call_args.args[0]['content']
+    schema = request.call_args.kwargs['json']['tools'][0]['function']['parameters']
+    assert 'image' not in schema['properties']['actions']['items']['properties']['kind']['enum']

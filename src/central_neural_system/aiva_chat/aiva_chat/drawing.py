@@ -110,7 +110,10 @@ pixels, not the coordinate summary alone. Without an attached screenshot you hav
 vision; never claim visual inspection or photorealistic image generation. Return a brief,
 natural response alongside the actions.'''
 
-PAINT_INSTRUCTIONS = '''Painting real raster images: you can place an AI-painted picture on the canvas
+PAINT_INSTRUCTIONS = '''A real raster painting engine is available. For a requested picture or painting,
+prefer one image action instead of approximating the subject with many vector shapes.
+The vector painting instructions above apply when editable vector art is specifically requested.
+You can place an AI-painted picture on the canvas
 with an image action: {"kind":"image","prompt":"<detailed English scene description>",
 "x":400,"y":150,"width":500,"height":400}. The prompt must be a rich text-to-image
 description of the whole picture (subject, setting, style, medium, lighting, palette,
@@ -119,14 +122,15 @@ size, so choose the placement deliberately relative to the other objects. Use an
 action when the user asks for a picture, photograph, painting, poster, realistic scene,
 textured subject, or anything vector shapes cannot convey well; the painted picture is
 finished art by itself, so do not draw vector outlines on top of it unless the user asks
-for a mixed-media piece. Place image actions first in a pass (later actions draw on top of
+for a mixed-media piece. Use x=0,y=0,width=1000,height=650 for a full-canvas picture unless another placement is requested.
+Place image actions first in a pass (later actions draw on top of
 them), at most two image actions per request, and prefer one strong picture over several
 small ones. Painted images cannot be recolored; they can be moved, sized at placement or
 deleted and painted again with a new prompt. Tell the user in the response field what you
 painted for them.'''
 
 
-def validate_actions(actions):
+def validate_actions(actions, *, allow_image_layers=False):
     if not isinstance(actions, list) or not 1 <= len(actions) <= 100:
         raise ValueError('Expected 1 to 100 canvas actions')
     result = []
@@ -196,14 +200,22 @@ def validate_actions(actions):
                     raise ValueError('Invalid point')
                 item['points'].append([max(0, min(1000, point[0])), max(0, min(650, point[1]))])
         if action['kind'] in ('rectangle', 'ellipse', 'image'):
-            width = min(item.get('width', 0), 1000)
-            height = min(item.get('height', 0), 650)
+            width = min(item.get('width', 1000 if action['kind'] == 'image' else 0), 1000)
+            height = min(item.get('height', 650 if action['kind'] == 'image' else 0), 650)
+            if action['kind'] == 'image':
+                width, height = max(16, width), max(16, height)
             item['width'] = width
             item['height'] = height
             item['x'] = min(item.get('x', 0), 1000 - width)
             item['y'] = min(item.get('y', 0), 650 - height)
-        if action['kind'] == 'image' and not item.get('prompt'):
-            raise ValueError('Image actions need a painting prompt')
+        if action['kind'] == 'image':
+            # Browser artwork can contain older pictures without a stored prompt.
+            # Their bitmap stays in the browser; only metadata enters LLM context.
+            if not item.get('prompt', '').strip():
+                if allow_image_layers and item.get('id'):
+                    item['prompt'] = 'Existing painted image'
+                else:
+                    raise ValueError('Image actions need a painting prompt')
         if action['kind'] == 'letter':
             item.setdefault('x', 270)
             item.setdefault('y', 20)

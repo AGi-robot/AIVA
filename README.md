@@ -171,14 +171,16 @@ without deleting the stored history.
 
 Grace can paint real raster artwork through the community MossInfer engine (v2.2.1).
 When she emits a canvas `image` action, the chat node spawns a `moss-server` sidecar,
-loads the MOSS-Image weights once, renders a PNG, and publishes it as a separate
-`canvas_image` event (never through the model or `canvas_actions`). The sidecar is
-released after each painting so the GPU stays free for the chat model.
+creates an engine once, renders a PNG, and publishes it as a separate
+`canvas_image` event (never through the model or `canvas_actions`). GPU weights are
+released after each painting; the engine and its embedding cache remain available
+for the next painting. Later vector actions wait for the bitmap, preserving layer order.
 
-The engine binary and weights are expected at:
+The engine is found on `PATH`, or defaults to the following paths under your home directory.
+`launch.sh` sets the weight root to this checkout’s `models/mossimage/`:
 
-* `/home/oppa-ai/mossinfer/mossinfer-2.2.1-linux-cu13-x86_64/bin/moss-server`
-* `/home/oppa-ai/AGi/models/mossimage/` (`sft/`, `comfy/`, `distill-8step/`)
+* `~/mossinfer/mossinfer-2.2.1-linux-cu13-x86_64/bin/moss-server`
+* `~/AGi/models/mossimage/` (`sft/`, `comfy/`, `distill-8step/`)
 
 All paths, the GPU device, and the VRAM budget are overridable with environment
 variables (the sidecar runs on `CUDA_VISIBLE_DEVICES=$MOSS_PAINT_DEVICE`):
@@ -186,6 +188,7 @@ variables (the sidecar runs on `CUDA_VISIBLE_DEVICES=$MOSS_PAINT_DEVICE`):
 | Variable | Default | Meaning |
 |---|---|---|
 | `MOSS_PAINT_SERVER_BIN` | `<engine>/bin/moss-server` | moss-server binary |
+| `MOSS_PAINT_WEIGHTS_ROOT` | `<checkout>/models/mossimage` when launched, otherwise `~/AGi/models/mossimage` | root for all weight defaults |
 | `MOSS_PAINT_MODEL_DIR` | `<weights>/sft` | SFT bundle (`model_index.json` + tokenizer) |
 | `MOSS_PAINT_DIT_FILE` | `<weights>/comfy/diffusion_models/moss_image_sft_int8_convrot.safetensors` | DiT weights |
 | `MOSS_PAINT_TE_FILE` | `<weights>/comfy/text_encoders/qwen3.5_9b_int8_convrot.safetensors` | text encoder |
@@ -193,11 +196,27 @@ variables (the sidecar runs on `CUDA_VISIBLE_DEVICES=$MOSS_PAINT_DEVICE`):
 | `MOSS_PAINT_DISTILL_DIR` | `<weights>/distill-8step` | 8-step DMD distill bundle (lora + time_embedding) |
 | `MOSS_PAINT_DEVICE` | `1` | CUDA device (physical GPU index visible inside `CUDA_VISIBLE_DEVICES`) |
 | `MOSS_PAINT_VRAM_MIB` | `4096` | VRAM budget passed to `load` |
-| `MOSS_PAINT_TIMEOUT_SECONDS` | `300` | per-painting generation timeout |
+| `MOSS_PAINT_TIMEOUT_SECONDS` | `300` | per-painting startup and generation timeout |
 | `MOSS_PAINT_RELEASE` | `1` | `0` disables `release` after each painting |
 
 Painting is enabled only when `MossClient.available()` is true — the binary, the SFT
 bundle, the DiT, the text encoder, the VAE, and the distill bundle's `lora.safetensors`
 and `time_embedding.safetensors` must all be present. On a missing engine or weights,
-Grace silently falls back to vector drawing. A failed painting publishes
-`canvas_image_error` and keeps the draft.
+Grace falls back to vector drawing and logs a warning. A failed painting ends the request
+with `canvas_error`, preserving layers already sent; it is never reported as a finished
+painting. Timeouts and shutdown terminate and reap the sidecar so GPU jobs cannot linger.
+
+Generation uses 256–704 pixels per side (multiples of 16, at most 0.5 MP), placed at the
+requested canvas coordinates. There are at most two paintings per request. GPU generation
+has its own timeout and does not consume the vector planning budget. The 4 GiB budget is
+an upper bound for this engine, not a reservation: the selected GPU still needs enough
+free memory alongside llama.cpp. The launcher does not unload the chat model automatically.
+
+The browser waits for bitmap decoding before snapshots and PNG export. Requests send
+image descriptions and positions plus a downscaled screenshot, rather than the original
+PNG bytes. Editable artwork imports accept up to 32 MiB; browser storage may fill sooner,
+so use **Save artwork** if local autosave reports a storage error.
+
+CI exercises the sidecar protocol with a small fake process, without installing CUDA or
+model weights, and runs the canvas bitmap lifecycle checks with Node.js. Actual image
+quality and GPU memory use still require testing on the target GPU.

@@ -18,8 +18,10 @@ never taken from model output or the network.
 from __future__ import annotations
 
 import json
+import math
 import os
 import selectors
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -28,8 +30,10 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-ENGINE_ROOT = Path("/home/oppa-ai/mossinfer/mossinfer-2.2.1-linux-cu13-x86_64")
-WEIGHTS_ROOT = Path("/home/oppa-ai/AGi/models/mossimage")
+ENGINE_ROOT = Path.home() / "mossinfer/mossinfer-2.2.1-linux-cu13-x86_64"
+WEIGHTS_ROOT = Path.home() / "AGi/models/mossimage"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MAX_PNG_BYTES = 5_900_000
 
 
 class MossPaintError(RuntimeError):
@@ -38,52 +42,42 @@ class MossPaintError(RuntimeError):
 
 def _path_env(name: str, default: Path) -> Path:
     value = os.getenv(name)
-    return Path(value) if value else default
+    return Path(value).expanduser() if value else default
 
 
 def paint_size(width, height) -> tuple[int, int]:
     """Choose the generation size for a canvas placement.
 
-    The result is aspect-true to the placement, made of multiples of 16, kept
-    inside 256..704 per side (small sizes look bad, large ones are slow) and
-    capped at roughly 0.6 MP so a painted layer stays affordable.
+    Keep a layer within 256..704 pixels per side, on a 16-pixel grid.
+    Preserve its aspect ratio where the size bounds allow it. At most 0.5 MP
+    keeps decoding, transport and GPU workspace modest on a shared GPU.
     """
     try:
-        width = min(1000.0, max(0.0, float(width)))
-        height = min(650.0, max(0.0, float(height)))
+        width, height = float(width), float(height)
     except (TypeError, ValueError):
         return 512, 512
-    if not width or not height:
+    if not all(math.isfinite(v) and v > 0 for v in (width, height)):
         return 512, 512
-    scale = max(1.0, 256.0 / min(width, height))
-    width, height = width * scale, height * scale
-    if width > 704:
-        height *= 704.0 / width
-        width = 704.0
-    if height > 704:
-        width *= 704.0 / height
-        height = 704.0
-    if width * height > 614400:  # 0.6 MP cap, applied proportionally
-        shrink = (614400.0 / (width * height)) ** 0.5
-        width, height = width * shrink, height * shrink
-    def round16(value: float) -> int:
-        return max(256, min(704, int(round(value / 16)) * 16))
-    return round16(width), round16(height)
+    scale = min(704 / max(width, height), max(1, 256 / min(width, height)))
+    return tuple(max(256, min(704, round(value * scale / 16) * 16))
+                 for value in (width, height))
 
 
 class MossClient:
     """Own one ``moss-server`` child; generate PNG paintings on demand."""
 
     def __init__(self) -> None:
-        self.binary = _path_env("MOSS_PAINT_SERVER_BIN", ENGINE_ROOT / "bin" / "moss-server")
-        self.model_dir = _path_env("MOSS_PAINT_MODEL_DIR", WEIGHTS_ROOT / "sft")
+        self.binary = _path_env("MOSS_PAINT_SERVER_BIN", Path(
+            shutil.which("moss-server") or ENGINE_ROOT / "bin" / "moss-server"))
+        weights = _path_env("MOSS_PAINT_WEIGHTS_ROOT", WEIGHTS_ROOT)
+        self.model_dir = _path_env("MOSS_PAINT_MODEL_DIR", weights / "sft")
         self.dit_file = _path_env(
-            "MOSS_PAINT_DIT_FILE", WEIGHTS_ROOT / "comfy" / "diffusion_models" / "moss_image_sft_int8_convrot.safetensors")
+            "MOSS_PAINT_DIT_FILE", weights / "comfy" / "diffusion_models" / "moss_image_sft_int8_convrot.safetensors")
         self.text_encoder_file = _path_env(
-            "MOSS_PAINT_TE_FILE", WEIGHTS_ROOT / "comfy" / "text_encoders" / "qwen3.5_9b_int8_convrot.safetensors")
+            "MOSS_PAINT_TE_FILE", weights / "comfy" / "text_encoders" / "qwen3.5_9b_int8_convrot.safetensors")
         self.vae_file = _path_env(
-            "MOSS_PAINT_VAE_FILE", WEIGHTS_ROOT / "comfy" / "vae" / "flux2-vae.safetensors")
-        self.distill_dir = _path_env("MOSS_PAINT_DISTILL_DIR", WEIGHTS_ROOT / "distill-8step")
+            "MOSS_PAINT_VAE_FILE", weights / "comfy" / "vae" / "flux2-vae.safetensors")
+        self.distill_dir = _path_env("MOSS_PAINT_DISTILL_DIR", weights / "distill-8step")
         self.device = os.getenv("MOSS_PAINT_DEVICE", "1")
         self.vram_budget_bytes = int(os.getenv("MOSS_PAINT_VRAM_MIB", "4096")) * 1024 * 1024
         self.timeout = float(os.getenv("MOSS_PAINT_TIMEOUT_SECONDS", "300"))
@@ -92,6 +86,8 @@ class MossClient:
         self._buffer = b""
         self._stderr: deque[str] = deque(maxlen=6)
         self._lock = threading.Lock()
+        self._process_lock = threading.RLock()
+        self._closed = False
         self._next_id = 1
         self._loaded = False
 
@@ -99,7 +95,7 @@ class MossClient:
 
     def available(self) -> bool:
         """True when the engine and the weights are all in place."""
-        return (self.binary.is_file()
+        return (self.binary.is_file() and os.access(self.binary, os.X_OK)
                 and (self.model_dir / "model_index.json").is_file()
                 and self.dit_file.is_file()
                 and self.text_encoder_file.is_file()
@@ -113,28 +109,49 @@ class MossClient:
         return " ".join(self._stderr)[-600:]
 
     def _spawn(self) -> None:
-        if self._process is not None and self._process.poll() is None:
-            return
-        self._buffer = b""
-        self._loaded = False
-        env = dict(os.environ, CUDA_VISIBLE_DEVICES=self.device)
-        try:
-            self._process = subprocess.Popen(
-                [str(self.binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, env=env)
-        except OSError as error:
-            self._process = None
-            raise MossPaintError(f"Cannot start moss-server: {error}") from error
-        threading.Thread(target=self._drain_stderr, daemon=True).start()
+        with self._process_lock:
+            if self._closed:
+                raise MossPaintError("The painting engine is shutting down")
+            if self._process is not None and self._process.poll() is None:
+                return
+            self._dispose()
+            env = dict(os.environ, CUDA_VISIBLE_DEVICES=self.device)
+            try:
+                self._process = subprocess.Popen(
+                    [str(self.binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, env=env)
+            except OSError as error:
+                raise MossPaintError(f"Cannot start moss-server: {error}") from error
+            threading.Thread(target=self._drain_stderr, args=(self._process,), daemon=True).start()
+        self._hello()
 
-    def _drain_stderr(self) -> None:
-        process = self._process
-        if process is None or process.stderr is None:
-            return
-        for raw in iter(process.stderr.readline, b""):
-            text = raw.decode("utf-8", errors="replace").strip()
-            if text:
-                self._stderr.append(text)
+    def _drain_stderr(self, process: subprocess.Popen) -> None:
+        try:
+            for raw in iter(process.stderr.readline, b""):
+                text = raw.decode("utf-8", errors="replace").strip()
+                if text:
+                    self._stderr.append(text)
+        except (OSError, ValueError):
+            pass  # shutdown closes the pipe
+
+    def _dispose(self) -> None:
+        """Stop and reap the child, including a timed-out or still-generating one."""
+        with self._process_lock:
+            process, self._process = self._process, None
+            self._loaded = False
+            self._buffer = b""
+            if process is None:
+                return
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2)
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if pipe is not None:
+                    pipe.close()
 
     def _send(self, method: str, params: dict | None = None) -> int:
         request_id = self._next_id
@@ -150,13 +167,12 @@ class MossClient:
             raise MossPaintError(f"moss-server is not accepting requests. {self._stderr_tail()}") from None
         return request_id
 
-    def _read_line(self, timeout: float) -> str | None:
+    def _read_line(self, process: subprocess.Popen, timeout: float) -> str | None:
         """One protocol line with a timeout; ``None`` when it does not arrive."""
-        assert self._process is not None and self._process.stdout is not None
         buffer = self._buffer
         deadline = time.monotonic() + max(0.1, timeout)
         with selectors.DefaultSelector() as selector:
-            selector.register(self._process.stdout, selectors.EVENT_READ)
+            selector.register(process.stdout, selectors.EVENT_READ)
             while b"\n" not in buffer:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -164,7 +180,7 @@ class MossClient:
                     return None
                 if not selector.select(remaining):
                     continue
-                chunk = self._process.stdout.read1(65536)
+                chunk = process.stdout.read1(65536)
                 if not chunk:
                     raise MossPaintError(f"moss-server stopped. {self._stderr_tail()}")
                 buffer += chunk
@@ -174,15 +190,18 @@ class MossClient:
     def _call(self, method: str, params: dict | None, timeout: float,
               wait_done: bool = False) -> dict:
         """Send one request; return its result, or its ``done`` event."""
-        assert self._process is not None
+        process = self._process
+        if process is None:
+            raise MossPaintError("The painting engine is not running")
         request_id = self._send(method, params)
-        deadline = time.monotonic() + max(1.0, timeout)
-        response: dict | None = None
+        if timeout <= 0:
+            raise MossPaintError("Painting time budget reached")
+        deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise MossPaintError(f"moss-server did not answer {method} within {timeout:g}s")
-            line = self._read_line(remaining)
+            line = self._read_line(process, remaining)
             if line is None:
                 raise MossPaintError(f"moss-server did not answer {method} within {timeout:g}s")
             if not line:
@@ -194,18 +213,18 @@ class MossClient:
             if not isinstance(message, dict) or message.get("id") != request_id:
                 continue
             if message.get("event") == "done":
+                if message.get("status") == "cancelled":
+                    raise MossPaintError("Painting was cancelled")
                 if message.get("status") == "error":
                     error = message.get("error") or {}
                     raise MossPaintError(f'{error.get("code", "error")}: {error.get("message", "")}')
-                if response is not None or method in ("generate", "preload"):
-                    return message
+                return message
             if "error" in message:
                 error = message["error"]
                 raise MossPaintError(f'{error.get("code", "error")}: {error.get("message", "")}')
             if "result" in message:
-                if not wait_done or method not in ("generate", "preload"):
+                if not wait_done:
                     return message
-                response = message
 
     # -- protocol steps -------------------------------------------------------
 
@@ -214,8 +233,11 @@ class MossClient:
         protocol = (result.get("result") or {}).get("protocol_version")
         if protocol != 2:
             raise MossPaintError("moss-server speaks an unexpected protocol version")
+        probe = (result.get("result") or {}).get("probe", {})
+        if probe.get("driver_compatible") is False or probe.get("device_count") == 0:
+            raise MossPaintError(probe.get("message") or "No compatible NVIDIA GPU is available")
 
-    def _load(self) -> None:
+    def _load(self, timeout=120) -> None:
         if self._loaded:
             return
         params = {
@@ -230,7 +252,7 @@ class MossClient:
             "distill": str(self.distill_dir),
             "te_host_pin": "auto",
         }
-        self._call("load", params, 120)
+        self._call("load", params, min(120, timeout))
         self._loaded = True
 
     def _release(self) -> None:
@@ -238,12 +260,12 @@ class MossClient:
         if not self.release_after or self._process is None:
             return
         try:
-            self._call("release", {"keep_host_copy": False}, 120)
-            # The next painting must load the weights again after release.
-            self._loaded = False
+            self._call("release", {"keep_host_copy": False}, 5)
+            # Soft release retains the engine and embedding cache. The next
+            # generate reloads its GPU weights without recreating the engine.
         except MossPaintError:
-            # The engine keeps its memory; generation still works next time.
-            pass
+            # A failed release must not leave a GPU allocation behind.
+            self._dispose()
 
     # -- public API -----------------------------------------------------------
 
@@ -254,10 +276,10 @@ class MossClient:
             raise MossPaintError("The painting prompt is empty")
         output = Path(tempfile.gettempdir()) / f"grace-paint-{uuid.uuid4().hex}.png"
         with self._lock:
-            self._spawn()
+            deadline = time.monotonic() + self.timeout
             try:
-                self._hello()
-                self._load()
+                self._spawn()
+                self._load(deadline - time.monotonic())
                 self._call("generate", {
                     "prompt": prompt[:2000],
                     "width": int(width),
@@ -266,11 +288,23 @@ class MossClient:
                     "save_metadata": False,
                     "include_prompts": False,
                     "distill": str(self.distill_dir),
-                }, self.timeout, wait_done=True)
+                }, deadline - time.monotonic(), wait_done=True)
                 try:
-                    return output.read_bytes()
+                    if output.stat().st_size > MAX_PNG_BYTES:
+                        raise MossPaintError("The painted PNG exceeds the canvas image limit")
+                    png = output.read_bytes()
+                    if not png.startswith(PNG_SIGNATURE):
+                        raise MossPaintError("The painting engine did not produce a PNG")
+                    return png
                 except OSError as error:
                     raise MossPaintError(f"The painted PNG could not be read: {error}") from error
+            except (MossPaintError, OSError, ValueError) as error:
+                # A timeout is not a cancellation: stop the child so it cannot
+                # keep generating or leave unread protocol events behind.
+                self._dispose()
+                if isinstance(error, MossPaintError):
+                    raise
+                raise MossPaintError(f"Painting engine stopped: {error}") from error
             finally:
                 try:
                     output.unlink(missing_ok=True)
@@ -279,16 +313,7 @@ class MossClient:
                 self._release()
 
     def close(self) -> None:
-        """Ask the sidecar to shut down; fall back to killing it."""
-        process, self._process = self._process, None
-        self._loaded = False
-        if process is None or process.poll() is not None:
-            return
-        try:
-            process.stdin.write(b'{"id": 0, "method": "shutdown"}\n')
-            process.stdin.flush()
-            process.wait(timeout=10)
-            return
-        except Exception:
-            pass
-        process.kill()
+        """Stop the sidecar even while a painting is in progress."""
+        with self._process_lock:
+            self._closed = True
+            self._dispose()

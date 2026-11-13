@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # --- Paths -------------------------------------------------------------------
 # Absolute path of the folder containing this script (not the user's current directory)
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# Repository root, one level above this script (currently unused)
+# Repository root, one level above this script
 REPO_DIR="$(dirname -- "$SCRIPT_DIR")"
 # Python venv location (default: .venv next to this script; override with AIVA_VENV)
 VENV_DIR="${AIVA_VENV:-$SCRIPT_DIR/.venv}"
@@ -50,6 +50,7 @@ export LD_LIBRARY_PATH="$LLAMA_CPP_DIR/build/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_
 export AIVA_LLM_BASE_URL="$LLM_BASE_URL"
 export AIVA_LLM_MODEL="$LLM_MODEL"
 export AIVA_EMBED_BASE_URL="$EMBED_BASE_URL"
+export MOSS_PAINT_WEIGHTS_ROOT="${MOSS_PAINT_WEIGHTS_ROOT:-$REPO_DIR/models/mossimage}"
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
   C_RESET=$'\033[0m'
@@ -151,7 +152,6 @@ if [[ ${#WORKSPACE_PACKAGES[@]} -eq 0 ]]; then
 fi
 
 mkdir -p "$LOG_DIR" "$ROS_LOG_DIR"
-stage "01 / 04" "Build workspace"
 stage "01 / 04" "Build workspace"
 build_workspace() {
   (cd "$SCRIPT_DIR" && colcon build --cmake-args "-DPython3_EXECUTABLE=$AIVA_ROS_PYTHON")
