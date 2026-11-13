@@ -69,20 +69,15 @@ the `agi_home` parameter and can be overridden with `AIVA_MEMORY_PATH`. The
 node sends the latest 8 exchanges to the LLM as active context; older turns
 remain stored but are not semantically recalled yet.
 
-For a local Ollama server, set `AIVA_LLM_BASE_URL` and `AIVA_LLM_MODEL` if your
-model or address differs from the defaults. `./launch.sh` preloads the configured
-local Ollama model before starting AIVA chat, then keeps it loaded for 30 minutes
-after its last request. Set `AIVA_LLM_KEEP_ALIVE=-1` to keep it loaded
-indefinitely, or `AIVA_PRELOAD_LLM=0` to disable preloading. Preloading is skipped
-for non-local, non-Ollama-compatible endpoints.
-
-By default, the launcher creates an Ollama wrapper model from the installed
-Ministral 3 8B Q4_K_XL model with `num_ctx` set to 25600. This lowers KV-cache
-memory compared with the previous 32768-token context and can allow Ollama to
-offload more layers to GPU; it does not guarantee full GPU offload, which also
-depends on free VRAM. Change the context with `AIVA_LLM_NUM_CTX`. Change the
-underlying installed model with `AIVA_LLM_SOURCE_MODEL`. Setting `AIVA_LLM_MODEL`
-selects an existing model directly and skips wrapper creation.
+Grace's language models run on a single llama.cpp router: one `llama-server`
+serves chat and vision (Ministral 3 14B Instruct 2512, with its `mmproj` vision
+projector) plus embeddings (voyage-4-nano) on one port, routing by the request's
+model name (`models/llama-router.ini`). The launcher starts that router through
+the `agi-llm-router` systemd user unit when it exists, keeps the models loaded
+indefinitely (`AIVA_LLM_KEEP_ALIVE` changes this), and skips it when `AIVA_LLM_BASE_URL`
+points elsewhere. For a different endpoint, set `AIVA_LLM_BASE_URL` and
+`AIVA_LLM_MODEL`. Preloading is skipped for non-local, non-Ollama-compatible
+endpoints; set `AIVA_PRELOAD_LLM=0` to disable preloading entirely.
 
 Build the AIVA packages from this workspace:
 
@@ -109,9 +104,10 @@ The profile is added to Grace's system context when the file exists.
 
 Rosbridge must listen at `127.0.0.1:9090`; the console backend publishes the
 input signal there, and the browser receives responses through its WebSocket
-proxy. The default LLM endpoint is `http://127.0.0.1:11434/v1`; the launcher
-creates `aiva-ministral-3-8b-ctx25600` from
-`hf.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF:UD-Q4_K_XL`. For an authenticated endpoint, set `AIVA_LLM_API_KEY` in
+proxy. The default LLM endpoint is `http://127.0.0.1:8080/v1`, where the
+llama.cpp router serves `ministral-3-14b-instruct-2512` (chat and vision) and
+`voyage-4-nano` (embeddings) from `models/llama-router.ini`. For an
+authenticated endpoint, set `AIVA_LLM_API_KEY` in
 the environment; never put it in the ROS message or source files.
 
 The AIVA ROS workspace can run a small heartbeat process alongside its future

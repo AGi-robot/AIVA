@@ -1,4 +1,5 @@
 import json
+import threading
 from contextlib import nullcontext
 from unittest.mock import Mock
 
@@ -8,8 +9,9 @@ from aiva_chat.drawing import (
     validate_actions, canvas_context, drawing_history, drawing_summary,
     repair_model_actions,
 )
-from aiva_chat.node import AivaChat
+from aiva_chat.node import AivaChat, _append_user_content, _draft_needs_refinement
 from aiva_chat.memory import GraceMemory
+from aiva_chat.moss import MossPaintError, paint_size
 
 
 def _mock_stream(monkeypatch, response):
@@ -159,8 +161,13 @@ def test_canvas_request_routes_to_drawing_worker():
     node._submit_prompt = Mock()
     message = Mock(data=json.dumps({'text': 'Draw a tree', 'identifier': 'draw-5', 'canvas': {'objects': []}}))
     node._on_webui_input(message)
-    node._pool.submit.assert_called_once_with(node._draw, 'Draw a tree', 'draw-5', {'objects': []})
+    node._pool.submit.assert_called_once_with(node._draw, 'Draw a tree', 'draw-5', {'objects': []}, None)
     node._submit_prompt.assert_not_called()
+
+    message = Mock(data=json.dumps({'text': 'Draw a tree', 'canvas': {'objects': []},
+                                    'snapshot': 'data:image/png;base64,AAAA'}))
+    node._on_webui_input(message)
+    assert node._pool.submit.call_args.args[-1] == 'data:image/png;base64,AAAA'
 
 
 def test_cubic_paint_and_multistop_gradient_survive_validation():
@@ -230,6 +237,37 @@ def test_old_drawing_history_and_new_summaries_do_not_repeat_geometry():
     assert summary['palette'] == ['#648c55', '#df78a8']
     assert summary['writing'] == ['For you']
     assert len(drawing_summary(actions)) < 250
+
+
+def test_drawing_history_repairs_role_order_and_discards_orphan_turns():
+    history = drawing_history([
+        {'role': 'assistant', 'content': 'orphan assistant'},
+        {'role': 'user', 'content': 'first user'},
+        {'role': 'user', 'content': 'duplicate user'},
+        {'role': 'assistant', 'content': 'assistant reply'},
+        {'role': 'user', 'content': 'unfinished latest user'},
+    ])
+    assert history == [
+        {'role': 'user', 'content': 'first user\nduplicate user'},
+        {'role': 'assistant', 'content': 'assistant reply'},
+    ]
+
+
+def test_canvas_followup_extends_existing_user_turn_and_keeps_images():
+    messages = [
+        {'role': 'system', 'content': 'Rules'},
+        {'role': 'user', 'content': [
+            {'type': 'text', 'text': 'Draw a flower'},
+            {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AAAA'}},
+        ]},
+    ]
+    _append_user_content(messages, [
+        {'type': 'text', 'text': 'Continue with the next pass'},
+        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,BBBB'}},
+    ])
+    assert [message['role'] for message in messages] == ['system', 'user']
+    assert len(messages[-1]['content']) == 4
+    assert messages[-1]['content'][-1]['image_url']['url'].endswith('BBBB')
 
 
 def test_truncated_model_plan_reports_actionable_error_without_painting(tmp_path, monkeypatch):
@@ -308,6 +346,19 @@ def drawing_node(tmp_path):
     node._memory = GraceMemory(str(tmp_path / 'memory.sqlite'))
     node._publish = Mock()
     node.get_logger = Mock(return_value=Mock())
+    node._snapshots, node._snapshot_timeout, node._vision_ok = {}, 0.5, True
+    node._paint, node._paint_ready = None, None
+    return node
+
+
+def paint_node(tmp_path):
+    """A drawing node with a fake working MossInfer sidecar."""
+    node = drawing_node(tmp_path)
+    node._paint = Mock()
+    node._paint.available.return_value = True
+    node._paint.generate.return_value = b'PNG-PAINTING'
+    node._paint.timeout = 60
+    node._paint_ready = None
     return node
 
 
@@ -368,3 +419,209 @@ def test_expired_time_budget_does_not_start_a_model_request(tmp_path, monkeypatc
     node._draw('Paint', 'timeout', {'objects': []})
     request.assert_not_called()
     assert node._publish.call_args.args[0]['type'] == 'canvas_error'
+
+
+def test_canvas_snapshot_is_sent_as_image_content(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    node._await_snapshot = Mock(return_value=None)
+    response = Mock(is_error=False)
+    response.json.return_value = tool_response([{'kind': 'text', 'text': 'Hello'}])
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Draw a tree', 'draw-vision', {'objects': []}, 'data:image/png;base64,AAAA')
+    content = request.call_args_list[0].kwargs['json']['messages'][-1]['content']
+    assert isinstance(content, list)
+    assert content[0] == {'type': 'text', 'text': content[0]['text']}
+    assert 'Canvas state:' in content[0]['text'] and 'Drawing request: Draw a tree' in content[0]['text']
+    assert content[1] == {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AAAA'}}
+
+
+def test_invalid_snapshot_falls_back_to_plain_text(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    response = Mock(is_error=False)
+    response.json.return_value = tool_response([{'kind': 'text', 'text': 'Hello'}])
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Draw a tree', 'draw-bad', {'objects': []}, 'not-a-data-url')
+    content = request.call_args.kwargs['json']['messages'][-1]['content']
+    assert isinstance(content, str)
+    assert 'Canvas state:' in content
+
+
+def test_pass_two_observes_a_fresh_canvas_snapshot(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    observed = Mock(return_value='data:image/png;base64,BBBB')
+    node._await_snapshot = observed
+    response = Mock(is_error=False)
+    response.json.side_effect = [
+        tool_response([{'kind': 'ellipse', 'x': 10, 'y': 10, 'width': 30, 'height': 30}], False),
+        tool_response([{'kind': 'text', 'text': 'Details'}]),
+    ]
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Draw a garden', 'draw-loop', {'objects': []}, 'data:image/png;base64,AAAA')
+    assert observed.call_count == 1
+    content = request.call_args_list[1].kwargs['json']['messages'][-1]['content']
+    assert isinstance(content, list)
+    assert content[-1]['image_url']['url'] == 'data:image/png;base64,BBBB'
+    assert 'Visually review the latest attached canvas render' in content[-2]['text']
+
+
+def test_await_snapshot_requests_a_fresh_render_and_receives_it():
+    node = AivaChat.__new__(AivaChat)
+    node._snapshots, node._snapshot_timeout, node._publish = {}, 2, Mock()
+    result = {}
+
+    def waiter():
+        result['image'] = node._await_snapshot('draw-9')
+
+    thread = threading.Thread(target=waiter)
+    thread.start()
+    node._on_canvas_snapshot(Mock(data=json.dumps({
+        'identifier': 'draw-9', 'image': 'data:image/png;base64,EEEE'})))
+    thread.join(timeout=5)
+    assert result['image'] == 'data:image/png;base64,EEEE'
+    published = node._publish.call_args.args[0]
+    assert published == {'type': 'canvas_snapshot_request', 'identifier': 'draw-9'}
+    assert 'draw-9' not in node._snapshots
+
+
+def test_await_snapshot_times_out_without_a_reply():
+    node = AivaChat.__new__(AivaChat)
+    node._snapshots, node._snapshot_timeout, node._publish = {}, 0.1, Mock()
+    assert node._await_snapshot('draw-slow') is None
+    assert node._publish.call_args.args[0]['type'] == 'canvas_snapshot_request'
+
+
+def test_snapshot_subscription_answers_a_waiting_pass():
+    node = AivaChat.__new__(AivaChat)
+    node._snapshots = {}
+    node.get_logger = Mock(return_value=Mock())
+    event = threading.Event()
+    node._snapshots['draw-1'] = ('', event)
+    node._on_canvas_snapshot(Mock(data=json.dumps({
+        'identifier': 'draw-1', 'image': 'data:image/jpeg;base64,CCCC'})))
+    assert event.is_set()
+    assert node._snapshots['draw-1'][0] == 'data:image/jpeg;base64,CCCC'
+    # Unsolicited and malformed snapshots are ignored without disturbing pending state.
+    node._on_canvas_snapshot(Mock(data=json.dumps({
+        'identifier': 'other', 'image': 'data:image/jpeg;base64,DDDD'})))
+    node._on_canvas_snapshot(Mock(data='not json'))
+    node._on_canvas_snapshot(Mock(data=json.dumps({'identifier': 'draw-1', 'image': 'javascript:alert(1)'})))
+    assert node._snapshots == {'draw-1': ('data:image/jpeg;base64,CCCC', event)}
+
+
+def test_non_vision_endpoint_degrades_to_text_only(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    calls = []
+    arguments = json.dumps({'actions': [{'kind': 'text', 'text': 'Hello!', 'x': 20, 'y': 30}],
+                            'response': 'Hi'})
+
+    def open_stream(*args, **kwargs):
+        calls.append(kwargs['json'])
+        if len(calls) == 1:
+            rejected = Mock(is_error=True)
+            rejected.status_code = 400
+            rejected.read.return_value = b'image content not supported'
+            return nullcontext(rejected)
+        streamed = Mock(is_error=False)
+        streamed.iter_lines.return_value = iter([
+            'data: ' + json.dumps({'choices': [{'delta': {'tool_calls': [{
+                'index': 0, 'function': {'name': 'canvas_draw', 'arguments': arguments}}]}}]}),
+            'data: [DONE]',
+        ])
+        return nullcontext(streamed)
+
+    monkeypatch.setattr('aiva_chat.node.httpx.stream', open_stream)
+    node._draw('Draw a tree', 'draw-fallback', {'objects': []}, 'data:image/png;base64,AAAA')
+    assert node._vision_ok is False
+    assert isinstance(calls[0]['messages'][-1]['content'], list)
+    assert isinstance(calls[1]['messages'][-1]['content'], str)
+    events = [call.args[0] for call in node._publish.call_args_list]
+    assert events[-1]['type'] == 'canvas_done'
+
+
+def test_paint_size_chooses_an_aspect_true_generation_resolution():
+    assert paint_size(512, 512) == (512, 512)
+    assert paint_size(0, 0) == (512, 512)
+    width, height = paint_size(1000, 650)
+    assert width == 704 and 16 <= height <= 704 and width % 16 == 0 and height % 16 == 0
+    # Aspect is preserved and both sides stay inside the supported band.
+    small = paint_size(300, 200)
+    assert small[0] % 16 == 0 and small[1] % 16 == 0
+    assert abs(small[0] / small[1] - 1.5) < 0.35
+    assert all(256 <= side <= 704 for side in paint_size(1000, 100) + paint_size(100, 100))
+
+
+def test_image_actions_need_a_prompt_and_clamp_to_the_canvas():
+    actions = validate_actions([{'kind': 'image', 'prompt': 'a sunny meadow',
+                                 'x': 900, 'y': 500, 'width': 600, 'height': 500}])
+    assert actions[0]['kind'] == 'image'
+    assert actions[0]['x'] == 400 and actions[0]['y'] == 150
+    assert actions[0]['width'] == 600 and actions[0]['height'] == 500
+    with pytest.raises(ValueError):
+        validate_actions([{'kind': 'image', 'x': 0, 'y': 0}])
+    with pytest.raises(ValueError):
+        validate_actions([{'kind': 'image', 'prompt': 'x' * 900}])
+
+
+def test_paint_action_generates_and_publishes_a_canvas_image(tmp_path, monkeypatch):
+    node = paint_node(tmp_path)
+    response = Mock(is_error=False)
+    response.json.return_value = tool_response([
+        {'kind': 'image', 'prompt': 'a sunny meadow', 'x': 100, 'y': 80, 'width': 512, 'height': 384},
+        {'kind': 'ellipse', 'x': 10, 'y': 10, 'width': 30, 'height': 30},
+    ])
+    _mock_stream(monkeypatch, response)
+    node._draw('Paint a meadow photo', 'paint-1', {'objects': []})
+    published = [call.args[0] for call in node._publish.call_args_list]
+    # Vector actions ride canvas_actions; the bitmap arrives in its own event.
+    vector_batches = [event['actions'] for event in published if event['type'] == 'canvas_actions']
+    assert all(all(action['kind'] != 'image' for action in batch) for batch in vector_batches)
+    images = [event for event in published if event['type'] == 'canvas_image']
+    assert len(images) == 1
+    image = images[0]
+    assert image['src'].startswith('data:image/png;base64,')
+    assert image['width'] == 512 and image['height'] == 384
+    assert node._paint.generate.call_args.args == ('a sunny meadow', 512, 384)
+    assert published[-1]['type'] == 'canvas_done'
+    # The prepared context remembers the placed picture for later passes.
+    assert '"kind":"image"' in canvas_context(
+        [action for call in node._publish.call_args_list
+         for action in call.args[0].get('actions', []) if action.get('kind') == 'ellipse'] + [
+            {'id': 'grace-x', 'kind': 'image', 'prompt': 'a sunny meadow', 'x': 100, 'y': 80}])
+
+
+def test_paint_unavailable_drops_image_actions(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    node._paint_ready = False
+    response = Mock(is_error=False)
+    response.json.return_value = tool_response([
+        {'kind': 'image', 'prompt': 'a castle', 'x': 0, 'y': 0},
+        {'kind': 'ellipse', 'x': 10, 'y': 10, 'width': 30, 'height': 30},
+    ])
+    _mock_stream(monkeypatch, response)
+    node._draw('Paint a castle', 'paint-2', {'objects': []})
+    published = [call.args[0] for call in node._publish.call_args_list]
+    assert not [event for event in published if event['type'] in ('canvas_image', 'canvas_image_error')]
+    assert published[-1]['type'] == 'canvas_done'
+
+
+def test_paint_failure_reports_the_error_and_keeps_the_drawing(tmp_path, monkeypatch):
+    node = paint_node(tmp_path)
+    node._paint.generate.side_effect = MossPaintError('cuda: out of memory')
+    response = Mock(is_error=False)
+    response.json.return_value = tool_response([
+        {'kind': 'image', 'prompt': 'a castle', 'x': 0, 'y': 0},
+        {'kind': 'ellipse', 'x': 10, 'y': 10, 'width': 30, 'height': 30},
+    ])
+    _mock_stream(monkeypatch, response)
+    node._draw('Paint a castle', 'paint-3', {'objects': []})
+    published = [call.args[0] for call in node._publish.call_args_list]
+    errors = [event for event in published if event['type'] == 'canvas_image_error']
+    assert len(errors) == 1 and 'out of memory' in errors[0]['content']
+    assert published[-1]['type'] == 'canvas_done'
+
+
+def test_an_image_only_request_does_not_loop_refinements():
+    assert _draft_needs_refinement([
+        {'kind': 'image', 'prompt': 'a portrait', 'x': 100, 'y': 50, 'width': 400, 'height': 500},
+    ]) is False
+    assert _draft_needs_refinement([{'kind': 'ellipse', 'x': 0, 'y': 0}]) is True

@@ -29,9 +29,7 @@ START_CHAT="${AIVA_START_CHAT:-1}"
 LLM_PORT="${AIVA_LLM_PORT:-8080}"
 LLM_BASE_URL="${AIVA_LLM_BASE_URL:-http://127.0.0.1:${LLM_PORT}/v1}"
 EMBED_BASE_URL="${AIVA_EMBED_BASE_URL:-$LLM_BASE_URL}"
-LLM_NUM_CTX="${AIVA_LLM_NUM_CTX:-32768}"
 LLM_MODEL="${AIVA_LLM_MODEL:-ministral-3-14b-instruct-2512}"
-CREATE_CONTEXT_MODEL=0  # legacy Ollama context wrapper; only used with :11434 endpoints
 
 # --- llama.cpp router binaries and model presets ------------------------------
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
@@ -228,29 +226,9 @@ then
   exit 1
 fi
 
-if [[ "$START_CHAT" == "1" && "$CREATE_CONTEXT_MODEL" == "1" && ( "$LLM_BASE_URL" == "http://127.0.0.1:11434/v1" || "$LLM_BASE_URL" == "http://localhost:11434/v1" ) ]]; then
-  create_context_model() {
-    local modelfile="$LOG_DIR/Modelfile.ctx${LLM_NUM_CTX}"
-    printf 'FROM %s\nPARAMETER num_ctx %s\n' "$LLM_SOURCE_MODEL" "$LLM_NUM_CTX" >"$modelfile"
-    ollama create "$LLM_MODEL" -f "$modelfile"
-  }
-  if ! command -v ollama >/dev/null 2>&1; then
-    error "Ollama CLI is required to create the AIVA context configuration."
-    exit 1
-  fi
-  if ! run_spinner "Configuring Ollama context (${LLM_NUM_CTX} tokens)" "$LOG_DIR/model-create.log" create_context_model; then
-    error "Ollama model configuration failed; check $LOG_DIR/model-create.log."
-    exit 1
-  fi
-fi
-
 if [[ "$START_CHAT" == "1" && "$PRELOAD_LLM" != "0" ]]; then
   stage "02 / 04" "Warm up Grace's language model"
-  if [[ "$CREATE_CONTEXT_MODEL" == "1" && ( "$LLM_BASE_URL" == "http://127.0.0.1:11434/v1" || "$LLM_BASE_URL" == "http://localhost:11434/v1" ) ]]; then
-    info "Model: $LLM_MODEL  ${C_DIM}· context: $LLM_NUM_CTX · keep alive: $LLM_KEEP_ALIVE_LABEL${C_RESET}"
-  else
-    info "Model: $LLM_MODEL  ${C_DIM}· keep alive: $LLM_KEEP_ALIVE_LABEL${C_RESET}"
-  fi
+  info "Model: $LLM_MODEL  ${C_DIM}· keep alive: $LLM_KEEP_ALIVE_LABEL${C_RESET}"
   preload_llm() {
     "$AIVA_ROS_PYTHON" - "$LLM_BASE_URL" "$LLM_MODEL" "$LLM_KEEP_ALIVE" <<'PY'
 import json
