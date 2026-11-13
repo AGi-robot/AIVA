@@ -266,22 +266,27 @@ def canvas_context(objects, selected=None, max_chars=3600):
     return encode(state)
 
 
+def _summarize_canvas_plan(content: str) -> str:
+    """Drop raw canvas geometry from a stale plan, keep the prose and a note."""
+    for marker in ('canvas actions (playback not confirmed)', 'Artwork summary:'):
+        idx = content.find(marker)
+        if idx != -1:
+            return content[:idx].rstrip() + ' ' + marker + ' (raw geometry omitted).'
+    return content
+
+
 def drawing_history(messages, max_chars=1800):
     """Keep recent dialogue; old raw canvas plans must not consume the drawing context."""
     kept, used = [], 0
-    skip_canvas_user = False
     for message in reversed(messages):
         content = message['content']
         # Canvas requests already have the authoritative current document and render.
-        # Replaying an earlier failed plan biases the model toward repeating its errors.
-        if (message['role'] == 'assistant'
-                and ('canvas actions (playback not confirmed)' in content
-                     or 'Artwork summary:' in content)):
-            skip_canvas_user = True
-            continue
-        if message['role'] == 'user' and skip_canvas_user:
-            skip_canvas_user = False
-            continue
+        # Replaying an earlier failed plan biases the model toward repeating its errors,
+        # so the raw geometry is dropped but the prose and the user's context are kept.
+        if message['role'] == 'assistant' and (
+                'canvas actions (playback not confirmed)' in content
+                or 'Artwork summary:' in content):
+            content = _summarize_canvas_plan(content)
         if len(content) > 1000:
             content = content[:1000] + ' [earlier message shortened]'
         if used + len(content) > max_chars:

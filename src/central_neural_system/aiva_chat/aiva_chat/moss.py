@@ -211,7 +211,8 @@ class MossClient:
 
     def _hello(self) -> None:
         result = self._call("hello", {"client": "aiva_chat", "protocol_version": 2}, 30)
-        if result.get("protocol_version") != 2:
+        protocol = (result.get("result") or {}).get("protocol_version")
+        if protocol != 2:
             raise MossPaintError("moss-server speaks an unexpected protocol version")
 
     def _load(self) -> None:

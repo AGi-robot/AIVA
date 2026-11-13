@@ -287,9 +287,12 @@ def test_truncated_model_plan_reports_actionable_error_without_painting(tmp_path
     request = _mock_stream(monkeypatch, response)
     node._draw('Paint a garden', 'draw-truncated', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
-    assert [event['type'] for event in events] == ['canvas_start', 'canvas_progress', 'canvas_progress', 'canvas_error']
+    assert [event['type'] for event in events] == [
+        'canvas_start', 'canvas_progress', 'canvas_progress', 'canvas_progress',
+        'canvas_error',
+    ]
     assert 'complete drawing action' in events[-1]['content']
-    assert request.call_count == 3
+    assert request.call_count == 4
     assert request.call_args.kwargs['json']['max_tokens'] == 3072
     assert node._memory.recent() == []
 
@@ -374,28 +377,36 @@ def test_truncation_continues_from_complete_objects_without_duplicates(tmp_path,
     truncated = {'choices': [{'finish_reason': 'length', 'message': {'tool_calls': [{'function': {
         'name': 'canvas_draw', 'arguments': '{"actions":[' + json.dumps(first) + ',{"kind":"curve","points":['
     }}]}}]}
+    follow = tool_response([
+        {'kind': 'text', 'text': 'Garden'},
+        {'kind': 'ellipse', 'x': 100, 'y': 100, 'width': 40, 'height': 40, 'fill_color': '#648c55'},
+        {'kind': 'ellipse', 'x': 200, 'y': 200, 'width': 40, 'height': 40, 'fill_color': '#648c55'},
+        {'kind': 'ellipse', 'x': 300, 'y': 300, 'width': 40, 'height': 40, 'fill_color': '#648c55'},
+    ], more=False)
     response = Mock(is_error=False)
-    response.json.side_effect = [truncated, tool_response([{'kind': 'text', 'text': 'Garden'}])]
+    response.json.side_effect = [truncated, follow]
     request = _mock_stream(monkeypatch, response)
-    node._draw('Draw a garden', 'garden', {'objects': []})
+    node._draw('Draw a garden and write a sign', 'garden', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
     actions = [a for event in events if event['type'] == 'canvas_actions' for a in event['actions']]
-    assert [a['kind'] for a in actions] == ['ellipse', 'text']
-    assert actions[0]['id'] in request.call_args_list[1].kwargs['json']['messages'][-1]['content']
+    assert [a['kind'] for a in actions] == ['ellipse', 'text', 'ellipse', 'ellipse', 'ellipse']
+    ids = [a.get('id') for a in actions]
+    assert len(ids) == len(set(ids))  # no duplicated objects across passes
+    assert ids[0] in request.call_args_list[1].kwargs['json']['messages'][-1]['content']
     assert request.call_count == 2
-    assert request.call_args_list[1].kwargs['json']['tools'][0]['function']['parameters']['properties']['actions']['maxItems'] == 8
+    assert request.call_args_list[1].kwargs['json']['tools'][0]['function']['parameters']['properties']['actions']['maxItems'] == 10
     assert events[-1] == {'type': 'canvas_done', 'identifier': 'garden', 'partial': False}
-    assert 'Prepared 2 canvas actions' in node._memory.recent()[-1]['content']
+    assert 'Prepared 5 canvas actions' in node._memory.recent()[-1]['content']
 
 
 def test_more_passes_are_bounded_and_finish_as_an_editable_draft(tmp_path, monkeypatch):
     node = drawing_node(tmp_path)
     response = Mock(is_error=False)
-    response.json.side_effect = [tool_response([{'kind': 'text', 'text': f'Detail {i}'}], True) for i in range(3)]
+    response.json.side_effect = [tool_response([{'kind': 'text', 'text': f'Detail {i}'}], True) for i in range(4)]
     request = _mock_stream(monkeypatch, response)
-    node._draw('Paint', 'draft', {'objects': []})
+    node._draw('Paint and write details', 'draft', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
-    assert request.call_count == 3
+    assert request.call_count == 4
     assert events[-1]['type'] == 'canvas_done' and events[-1]['partial'] is True
     assert 'drawing budget' in events[-2]['content']
 
@@ -452,8 +463,13 @@ def test_pass_two_observes_a_fresh_canvas_snapshot(tmp_path, monkeypatch):
     node._await_snapshot = observed
     response = Mock(is_error=False)
     response.json.side_effect = [
-        tool_response([{'kind': 'ellipse', 'x': 10, 'y': 10, 'width': 30, 'height': 30}], False),
-        tool_response([{'kind': 'text', 'text': 'Details'}]),
+        tool_response([
+            {'kind': 'ellipse', 'x': 10, 'y': 10, 'width': 30, 'height': 30, 'fill_color': '#648c55'},
+            {'kind': 'ellipse', 'x': 60, 'y': 10, 'width': 30, 'height': 30, 'fill_color': '#648c55'},
+            {'kind': 'ellipse', 'x': 10, 'y': 60, 'width': 30, 'height': 30, 'fill_color': '#648c55'},
+            {'kind': 'ellipse', 'x': 60, 'y': 60, 'width': 30, 'height': 30, 'fill_color': '#648c55'},
+        ], more=False),
+        tool_response([], more=False),
     ]
     request = _mock_stream(monkeypatch, response)
     node._draw('Draw a garden', 'draw-loop', {'objects': []}, 'data:image/png;base64,AAAA')
@@ -530,7 +546,7 @@ def test_non_vision_endpoint_degrades_to_text_only(tmp_path, monkeypatch):
         return nullcontext(streamed)
 
     monkeypatch.setattr('aiva_chat.node.httpx.stream', open_stream)
-    node._draw('Draw a tree', 'draw-fallback', {'objects': []}, 'data:image/png;base64,AAAA')
+    node._draw('Draw a tree and write a caption', 'draw-fallback', {'objects': []}, 'data:image/png;base64,AAAA')
     assert node._vision_ok is False
     assert isinstance(calls[0]['messages'][-1]['content'], list)
     assert isinstance(calls[1]['messages'][-1]['content'], str)

@@ -154,7 +154,7 @@ Canvas requests use the same recent conversation memory as normal chat (the conf
 stored persistently in SQLite. The plan is recorded as unconfirmed playback; browser artwork
 is still saved locally and is not a visual memory or proof that the drawing completed.
 
-Canvas generation now uses at most three streamed passes, limited to 16, 8, then 4 actions,
+Canvas generation uses at most four streamed passes, limited to 16, 10, 8, then 6 actions,
 31 points per new contour, and 3,072 output tokens each. Complete actions from a
 truncated tool response are retained; continuation receives their assigned IDs
 and a compact summary so it can finish without replaying the same actions. The
@@ -166,3 +166,38 @@ or stalled read can therefore end after the request budget. Neither limit change
 the configured model context size. Interrupted plans are recorded as unconfirmed
 summaries, and raw plans in older history are shortened for both chat and Canvas
 without deleting the stored history.
+
+## Raster painting with MOSS-Image (MossInfer)
+
+Grace can paint real raster artwork through the community MossInfer engine (v2.2.1).
+When she emits a canvas `image` action, the chat node spawns a `moss-server` sidecar,
+loads the MOSS-Image weights once, renders a PNG, and publishes it as a separate
+`canvas_image` event (never through the model or `canvas_actions`). The sidecar is
+released after each painting so the GPU stays free for the chat model.
+
+The engine binary and weights are expected at:
+
+* `/home/oppa-ai/mossinfer/mossinfer-2.2.1-linux-cu13-x86_64/bin/moss-server`
+* `/home/oppa-ai/AGi/models/mossimage/` (`sft/`, `comfy/`, `distill-8step/`)
+
+All paths, the GPU device, and the VRAM budget are overridable with environment
+variables (the sidecar runs on `CUDA_VISIBLE_DEVICES=$MOSS_PAINT_DEVICE`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MOSS_PAINT_SERVER_BIN` | `<engine>/bin/moss-server` | moss-server binary |
+| `MOSS_PAINT_MODEL_DIR` | `<weights>/sft` | SFT bundle (`model_index.json` + tokenizer) |
+| `MOSS_PAINT_DIT_FILE` | `<weights>/comfy/diffusion_models/moss_image_sft_int8_convrot.safetensors` | DiT weights |
+| `MOSS_PAINT_TE_FILE` | `<weights>/comfy/text_encoders/qwen3.5_9b_int8_convrot.safetensors` | text encoder |
+| `MOSS_PAINT_VAE_FILE` | `<weights>/comfy/vae/flux2-vae.safetensors` | VAE |
+| `MOSS_PAINT_DISTILL_DIR` | `<weights>/distill-8step` | 8-step DMD distill bundle (lora + time_embedding) |
+| `MOSS_PAINT_DEVICE` | `1` | CUDA device (physical GPU index visible inside `CUDA_VISIBLE_DEVICES`) |
+| `MOSS_PAINT_VRAM_MIB` | `4096` | VRAM budget passed to `load` |
+| `MOSS_PAINT_TIMEOUT_SECONDS` | `300` | per-painting generation timeout |
+| `MOSS_PAINT_RELEASE` | `1` | `0` disables `release` after each painting |
+
+Painting is enabled only when `MossClient.available()` is true — the binary, the SFT
+bundle, the DiT, the text encoder, the VAE, and the distill bundle's `lora.safetensors`
+and `time_embedding.safetensors` must all be present. On a missing engine or weights,
+Grace silently falls back to vector drawing. A failed painting publishes
+`canvas_image_error` and keeps the draft.
