@@ -142,7 +142,7 @@ for package_source in "$REPO_DIR/canvas/src" "$REPO_DIR/imaging/src"; do
     PYTHONPATH="$package_source${PYTHONPATH:+:$PYTHONPATH}"
   fi
 done
-export PYTHONPATH="$VENV_SITE_PACKAGES${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$VENV_SITE_PACKAGES"
 if ! "$AIVA_ROS_PYTHON" -c 'import rclpy, httpx' >/dev/null 2>&1; then
   error "The AIVA venv cannot import ROS 2 Python modules or httpx."
   info "Recreate it with --system-site-packages, then install requirements.txt."
