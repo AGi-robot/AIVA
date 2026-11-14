@@ -1,4 +1,5 @@
 import sqlite3
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,6 +46,23 @@ class GraceMemoryTest(unittest.TestCase):
         self.assertLess(len(context), 150)
         with sqlite3.connect(self.database) as db:
             self.assertEqual(db.execute("SELECT content FROM conversation_turns WHERE role='assistant'").fetchone()[0], original)
+
+    def test_reviewed_drawing_lessons_survive_reopening_and_prefer_matching_subjects(self):
+        memory = GraceMemory(str(self.database))
+        memory.save_study('flower', 'A garden flower', 'reference', 'Curved petals', [{'kind': 'ellipse', 'x': 20}])
+        self.assertEqual(memory.drawing_lessons('flower'), '[]')
+        memory.review_study('flower', 'keep', 'Petals look balanced')
+        memory.save_study('car', 'A fast car', 'draw', 'Wheels', [])
+        memory.review_study('car', 'improve', 'Fix perspective')
+        reopened = GraceMemory(str(self.database))
+        lessons = json.loads(reopened.drawing_lessons('flower'))
+        self.assertEqual(lessons[0]['subject'], 'A garden flower')
+        self.assertEqual(lessons[0]['user_feedback'], 'Petals look balanced')
+        self.assertEqual(lessons[0]['example_actions'][0]['kind'], 'ellipse')
+        with self.assertRaises(ValueError):
+            reopened.review_study('unknown', 'keep')
+        with self.assertRaises(ValueError):
+            reopened.review_study('flower', 'automatic-success')
 
     def test_conversations_are_isolated_and_exchanges_share_an_id(self):
         memory = GraceMemory(str(self.database))

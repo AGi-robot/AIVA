@@ -220,3 +220,30 @@ so use **Save artwork** if local autosave reports a storage error.
 CI exercises the sidecar protocol with a small fake process, without installing CUDA or
 model weights, and runs the canvas bitmap lifecycle checks with Node.js. Actual image
 quality and GPU memory use still require testing on the target GPU.
+
+## Reference-guided drawing and practice
+
+Canvas now defaults to **Draw with tools**: it cannot generate a raster layer in
+this mode, even when MOSS is installed. Choose **Draw from MOSS reference** to
+have MOSS make one simple study image in a separate reference panel. Grace sees
+that target and the current canvas render, draws using curves/strokes/fills, then
+gets a fresh render for review. The reference is never inserted into the artwork,
+exported PNG, artwork JSON, or canvas snapshot. **Generate image with MOSS** keeps
+the previous direct image-generation feature available explicitly.
+
+Reference mode needs MOSS's engine/weights, a vision-capable chat endpoint with
+its image projector configured, and the connected browser to supply screenshots.
+It reports unavailable vision or missing screenshots instead of pretending to
+observe the drawing. Rendering quality and faithful copying still need live-model
+and GPU validation. MOSS reference generation has its own existing time budget.
+
+Completed drawing plans are saved in `drawing_studies` in Grace's existing SQLite
+memory. They are ungraded until you choose **Keep as example** or **Needs
+improvement**, optionally writing specific feedback. Future drawing requests
+retrieve up to three relevant user-reviewed studies, bounded summaries, and small
+recipes from kept examples. You can clear the canvas and choose **Draw with tools**
+to practice without generating a reference. The reference PNG itself is transient;
+studies store prompts, modes, proposed actions and feedback, not image data or
+proof of completed playback. These memories support adaptation and future dataset
+curation; they do not automatically train model weights or guarantee a lasting
+increase in drawing skill.

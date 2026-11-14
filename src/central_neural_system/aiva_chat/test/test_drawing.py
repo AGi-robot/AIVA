@@ -586,7 +586,7 @@ def test_paint_action_generates_and_publishes_a_canvas_image(tmp_path, monkeypat
         {'kind': 'ellipse', 'x': 10, 'y': 10, 'width': 30, 'height': 30},
     ])
     _mock_stream(monkeypatch, response)
-    node._draw('Paint a meadow photo', 'paint-1', {'objects': []})
+    node._draw('Paint a meadow photo', 'paint-1', {'objects': [], 'mode': 'image'})
     published = [call.args[0] for call in node._publish.call_args_list]
     # Vector actions ride canvas_actions; the bitmap arrives in its own event.
     vector_batches = [event['actions'] for event in published if event['type'] == 'canvas_actions']
@@ -629,7 +629,7 @@ def test_paint_failure_reports_the_error_and_keeps_the_drawing(tmp_path, monkeyp
         {'kind': 'ellipse', 'x': 10, 'y': 10, 'width': 30, 'height': 30},
     ])
     _mock_stream(monkeypatch, response)
-    node._draw('Paint a castle', 'paint-3', {'objects': []})
+    node._draw('Paint a castle', 'paint-3', {'objects': [], 'mode': 'image'})
     published = [call.args[0] for call in node._publish.call_args_list]
     errors = [event for event in published if event['type'] == 'canvas_error']
     assert len(errors) == 1 and 'out of memory' in errors[0]['content']
@@ -654,7 +654,7 @@ def test_painting_keeps_overlays_above_the_bitmap(tmp_path, monkeypatch):
         {'kind': 'move', 'id': 'painting', 'dx': 10},
     ])
     _mock_stream(monkeypatch, response)
-    node._draw('Paint an apple and write a caption', 'ordered', {'objects': []})
+    node._draw('Paint an apple and write a caption', 'ordered', {'objects': [], 'mode': 'image'})
     order = []
     for call in node._publish.call_args_list:
         event = call.args[0]
@@ -688,9 +688,89 @@ def test_painting_limit_is_enforced_across_passes(tmp_path, monkeypatch):
     response = Mock(is_error=False)
     response.json.side_effect = lambda: next(payloads)
     request = _mock_stream(monkeypatch, response)
-    node._draw('Paint a landscape', 'limited', {'objects': []})
+    node._draw('Paint a landscape', 'limited', {'objects': [], 'mode': 'image'})
     assert node._paint.generate.call_count == 2
     assert node._publish.call_args.args[0]['type'] == 'canvas_error'
     assert 'two paintings' in node._publish.call_args.args[0]['content']
     schema = request.call_args.kwargs['json']['tools'][0]['function']['parameters']
     assert 'image' not in schema['properties']['actions']['items']['properties']['kind']['enum']
+
+
+def test_reference_guides_strokes_without_becoming_a_canvas_layer(tmp_path, monkeypatch):
+    node = paint_node(tmp_path)
+    node._await_snapshot = Mock(return_value='data:image/jpeg;base64,CCCC')
+    shapes = [{'kind': 'ellipse', 'id': f'petal-{i}', 'x': i * 40, 'y': 50,
+               'width': 40, 'height': 50, 'fill': True, 'fill_color': '#ed8060'} for i in range(4)]
+    response = Mock(is_error=False)
+    response.json.side_effect = [tool_response(shapes), tool_response([{'kind': 'style', 'id': 'petal-1', 'fill_color': '#f4c56a'}])]
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Draw a flower', 'reference-flower', {'objects': [], 'mode': 'reference'}, 'data:image/png;base64,AAAA')
+    events = [call.args[0] for call in node._publish.call_args_list]
+    reference = next(event for event in events if event['type'] == 'canvas_reference')
+    assert reference['src'].startswith('data:image/png;base64,')
+    assert not any(event['type'] == 'canvas_image' for event in events)
+    assert all(a['kind'] != 'image' for event in events for a in event.get('actions', []))
+    assert node._paint.generate.call_count == 1
+    assert node._await_snapshot.call_count == 1
+    for call in request.call_args_list:
+        params = call.kwargs['json']
+        assert 'image' not in params['tools'][0]['function']['parameters']['properties']['actions']['items']['properties']['kind']['enum']
+        image_urls = [part['image_url']['url'] for message in params['messages'] if isinstance(message['content'], list)
+                      for part in message['content'] if part['type'] == 'image_url']
+        assert reference['src'] in image_urls
+    assert 'data:image/jpeg;base64,CCCC' in image_urls
+    assert 'data:image/png;base64,AAAA' not in image_urls
+    assert events[-1]['type'] == 'canvas_done'
+    assert node._memory.drawing_lessons('flower') == '[]'  # no autonomous positive grading
+    node._memory.review_study('reference-flower', 'keep', 'Good curved petals')
+    node._publish.reset_mock()
+    response.json.side_effect = None
+    response.json.return_value = tool_response(shapes)
+    node._draw('Draw a flower from memory', 'practice', {'objects': [], 'mode': 'draw'})
+    assert node._paint.generate.call_count == 1
+    assert 'Good curved petals' in request.call_args.kwargs['json']['messages'][0]['content']
+    assert not any(call.args[0]['type'] == 'canvas_reference' for call in node._publish.call_args_list)
+
+
+def test_reference_mode_requires_moss_and_reports_missing_vision(tmp_path, monkeypatch):
+    node = drawing_node(tmp_path)
+    node._draw('Draw', 'missing', {'objects': [], 'mode': 'reference'})
+    assert 'MOSS is unavailable' in node._publish.call_args.args[0]['content']
+    node = paint_node(tmp_path)
+    node._vision_ok = False
+    node._draw('Draw', 'vision', {'objects': [], 'mode': 'reference'})
+    node._paint.generate.assert_not_called()
+    assert 'vision-capable' in node._publish.call_args.args[0]['content']
+
+
+def test_default_mode_never_generates_images_even_if_moss_is_installed(tmp_path, monkeypatch):
+    node = paint_node(tmp_path)
+    response = Mock(is_error=False)
+    response.json.return_value = tool_response([{'kind': 'text', 'text': 'Hello'}])
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Write hello', 'plain', {'objects': []})
+    node._paint.generate.assert_not_called()
+    assert 'image' not in request.call_args.kwargs['json']['tools'][0]['function']['parameters']['properties']['actions']['items']['properties']['kind']['enum']
+
+
+def test_reference_mode_does_not_silently_fall_back_when_vision_is_rejected(tmp_path, monkeypatch):
+    node = paint_node(tmp_path)
+    rejected = Mock(is_error=True, status_code=400)
+    rejected.read.return_value = b'images not supported'
+    request = Mock(return_value=nullcontext(rejected))
+    monkeypatch.setattr('aiva_chat.node.httpx.stream', request)
+    node._draw('Draw a flower', 'rejected', {'objects': [], 'mode': 'reference'}, 'data:image/png;base64,AAAA')
+    assert request.call_count == 1
+    assert 'working vision endpoint' in node._publish.call_args.args[0]['content']
+    assert not any(call.args[0]['type'] == 'canvas_done' for call in node._publish.call_args_list)
+
+
+def test_reference_stops_if_fresh_canvas_snapshot_never_arrives(tmp_path, monkeypatch):
+    node = paint_node(tmp_path)
+    node._await_snapshot = Mock(return_value=None)
+    response = Mock(is_error=False)
+    response.json.return_value = tool_response([{'kind': 'ellipse', 'width': 20, 'height': 20}])
+    request = _mock_stream(monkeypatch, response)
+    node._draw('Draw a flower', 'no-render', {'objects': [], 'mode': 'reference'}, 'data:image/png;base64,AAAA')
+    assert request.call_count == 1
+    assert 'screenshot did not arrive' in node._publish.call_args.args[0]['content']
