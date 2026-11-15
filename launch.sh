@@ -7,6 +7,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # Repository root, one level above this script
 REPO_DIR="$(dirname -- "$SCRIPT_DIR")"
+CANVAS_SOURCE_DIR="${AGI_CANVAS_SOURCE_DIR:-$(dirname -- "$REPO_DIR")/canvas}"
+IMAGING_SOURCE_DIR="${AGI_IMAGING_SOURCE_DIR:-$(dirname -- "$REPO_DIR")/imaging}"
 # Python venv location (default: .venv next to this script; override with AIVA_VENV)
 VENV_DIR="${AIVA_VENV:-$SCRIPT_DIR/.venv}"
 
@@ -137,7 +139,7 @@ AIVA_ROS_PYTHON="$VENV_DIR/bin/python"
 # interpreter even when this workspace was built with the AIVA venv. Expose
 # the venv's packages to those processes without installing into system Python.
 VENV_SITE_PACKAGES="$($AIVA_ROS_PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-for package_source in "$REPO_DIR/canvas/src" "$REPO_DIR/imaging/src"; do
+for package_source in "$CANVAS_SOURCE_DIR/src" "$IMAGING_SOURCE_DIR/src"; do
   if [[ -d "$package_source" ]]; then
     PYTHONPATH="$package_source${PYTHONPATH:+:$PYTHONPATH}"
   fi

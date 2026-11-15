@@ -154,6 +154,12 @@ Canvas requests use the same recent conversation memory as normal chat (the conf
 stored persistently in SQLite. The plan is recorded as unconfirmed playback; browser artwork
 is still saved locally and is not a visual memory or proof that the drawing completed.
 
+Canvas Studio is part of the host WebUI. It sends drawing requests to the host's WebSocket
+API, and the host relays them through the existing AIVA ROS topics so requests and results
+remain visible to ROS monitoring tools. Local WebUI use needs no API key. Set
+`AGI_CANVAS_API_KEY` on the host if trusted external clients such as AuRoRA should call the
+WebSocket API directly; expose it through HTTPS/WSS and pass the key as the initial auth frame.
+
 Canvas generation uses at most four streamed passes, limited to 16, 10, 8, then 6 actions,
 31 points per new contour, and 3,072 output tokens each. Complete actions from a
 truncated tool response are retained; continuation receives their assigned IDs

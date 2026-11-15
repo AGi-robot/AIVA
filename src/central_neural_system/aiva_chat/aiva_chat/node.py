@@ -442,8 +442,8 @@ class AivaChat(Node):
                 selected = None
             self._publish({"type": "canvas_start", "identifier": identifier})
             mode = canvas.get('mode', 'draw')
-            if mode not in ('draw', 'reference', 'image'):
-                raise ValueError('Choose draw, reference, or image mode')
+            if mode not in ('draw', 'svg', 'reference', 'image'):
+                raise ValueError('Choose draw, SVG vector, reference, or image mode')
             if mode in ('reference', 'image') and not self._paint_available():
                 raise ValueError('MOSS is unavailable. Install its engine and weights, or choose Draw with tools.')
             reference = None
@@ -461,6 +461,11 @@ class AivaChat(Node):
             paints_on = mode == 'image'
             instructions = DRAW_INSTRUCTIONS + ("\n" + PAINT_INSTRUCTIONS if paints_on else
                 '\nDraw using strokes, curves, shapes and fills only. Image generation is disabled for the canvas.')
+            if mode == 'svg':
+                instructions += ('\nSVG VECTOR MODE: Create the requested artwork as clean, deliberate vector shapes '
+                    'and paths that remain editable on the shared canvas and export cleanly as SVG. Prefer smooth '
+                    'closed curves, layered silhouettes, restrained gradients and a compact palette. Do not use '
+                    'bitmap images, image-generation actions, filters, external assets or text unless requested.')
             if reference:
                 instructions += ('\nThe REFERENCE is a study target, not your artwork. Reconstruct it using actual '
                                  'drawing tools. Compare the separately labeled CURRENT CANVAS with it, simplify '
