@@ -65,7 +65,7 @@ recent-turn window. Results are separate from BFCL's official memory-tool
 categories, which use simulated key-value, vector, or recursive-summary
 backends. The runner never opens AIVA's live `~/.agi` memory database.
 
-See the [scorecard BFCL V4 guide](https://github.com/AGi-robot/scorecard/blob/dev/benchmarks/bfcl_v4/README.md#run-the-aiva-recent-window-memory-track)
+See the [scorecard BFCL V4 guide](https://github.com/AGi-robot/scorecard/blob/dev/benchmarks/bfcl/README.md)
 for setup and run instructions.
 
 ## AIVA chat and simple memory

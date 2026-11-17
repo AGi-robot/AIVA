@@ -1,7 +1,7 @@
 """Thin shim: the drawing language lives in ~/AGi/canvas (pip: grace-canvas).
 
-Raster painting ('image' actions) is registered by ~/AGi/imagegen when it is
-installed; without it the tool schema simply has no image kind.
+Raster painting ('image' actions) is registered by grace-imagegen from
+~/AGi/imaging.
 Re-exports keep `aiva_chat.node` and the existing tests working unchanged.
 """
 from canvas.engine import (DRAW_TOOL, DRAW_INSTRUCTIONS, validate_actions,
