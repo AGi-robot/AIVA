@@ -91,12 +91,19 @@ points elsewhere. For a different endpoint, set `AIVA_LLM_BASE_URL` and
 `AIVA_LLM_MODEL`. Preloading is skipped for non-local, non-Ollama-compatible
 endpoints; set `AIVA_PRELOAD_LLM=0` to disable preloading entirely.
 
+The shared Telepathy console is maintained in [AGi-robot/telepathy](https://github.com/AGi-robot/telepathy). Clone it beside this repository so the existing `src/telepathic_management` link resolves:
+
+```sh
+cd ~/AGi
+git clone https://github.com/AGi-robot/telepathy.git telepathy
+```
+
 Build the AIVA packages from this workspace:
 
 ```sh
 cd ~/AGi/AIVA
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select cryptic_signal_core aiva_chat telepathic_management
+colcon build --packages-up-to telepathic_management aiva_chat
 source install/setup.bash
 ```
 
