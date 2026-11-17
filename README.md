@@ -37,19 +37,17 @@ real ROS graph. Run the non-ROS tests from the repository root with:
 
 ```sh
 python3 -m pip install pytest httpx
-PYTHONPATH=AIVA/src/central_neural_system/aiva_chat:AIVA/src/central_neural_system/cryptic_signal_core \
-  python3 -m pytest -q AIVA/src/central_neural_system/aiva_chat/test AIVA/src/central_neural_system/cryptic_signal_core/test
+PYTHONPATH=AIVA/src/central_neural_system/aiva_chat:AIVA/src/central_neural_system/aiva_cryptic_signal_core:AIVA/src/cryptic_signal_core \
+  python3 -m pytest -q AIVA/src/central_neural_system/aiva_chat/test AIVA/src/central_neural_system/aiva_cryptic_signal_core/test
 ```
 
 Packages grouped under `src/central_neural_system/` belong to AIVA's central neural system. For
-example, `src/central_neural_system/cryptic_signal_core` is AIVA's cryptic ROS package, containing
-its message definitions and encoder class.
-Colcon discovers the package beneath the grouping directory; build it with:
+example, `src/central_neural_system/aiva_cryptic_signal_core` is AIVA's encoding scheme registry. Shared ROS messages and the base text codec come from [AGi-Robot/cypher](https://github.com/AGi-robot/cypher), linked at `src/cryptic_signal_core`. Clone Cypher beside AIVA with `git clone https://github.com/AGi-robot/cypher.git ~/AGi/cypher`. Colcon discovers the packages beneath the source directories; build the chat and console with:
 
 ```sh
 cd ~/AGi/AIVA
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select cryptic_signal_core
+colcon build --packages-up-to aiva_chat telepathic_management
 ```
 
 The shared WebUI backend uses AIVA's `CrypticSignalCore` when the AIVA package is
