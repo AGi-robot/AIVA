@@ -22,7 +22,7 @@ class CrypticSignalCoreTest(unittest.TestCase):
 
     def test_decode_rejects_mismatched_length_and_invalid_pulse(self):
         signal, pulse = self.core.encode("A")
-        with self.assertRaisesRegex(ValueError, "does not match pulse"):
+        with self.assertRaisesRegex(ValueError, "does not match symbol_count"):
             self.core.decode(signal + b"\x00", pulse)
         with self.assertRaisesRegex(ValueError, "multiple of six"):
             self.core.decode(signal, pulse - 1)
