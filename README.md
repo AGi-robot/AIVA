@@ -2,12 +2,12 @@
 
 ## Quick start
 
-Open `AGi/AIVA.code-workspace` in VS Code to keep the Explorer focused on AIVA;
-AuRoRA remains in the shared Git repository but is outside this workspace view.
+Open the AGi workspace in VS Code. The ROS workspace lives in the separate
+`AIVA/soma` repository.
 To start the local WebUI, rosbridge, and chat node together, run:
 
 ```sh
-cd ~/AGi/AIVA
+cd ~/AGi/AIVA/soma
 /usr/bin/python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pip install -r requirements.txt
 ./launch.sh
@@ -15,9 +15,34 @@ cd ~/AGi/AIVA
 
 The venv includes the system ROS 2 Python packages through
 `--system-site-packages`; this lets the chat node use ROS Jazzy's `rclpy` while
-keeping pip-installed AIVA dependencies inside `AIVA/.venv`. `launch.sh` builds
+keeping pip-installed AIVA dependencies inside `AIVA/soma/.venv`. `launch.sh` builds
 with that venv's Python and starts the AIVA services with it. If you keep the
 venv elsewhere, set `AIVA_VENV=/path/to/venv` when launching.
+
+## ROS packages and processes
+
+The `soma` colcon workspace contains ROS packages, but not every package
+executable is a ROS node:
+
+| Component | What it runs | ROS node? |
+|---|---|---:|
+| `aiva_chat` | Chat, LLM requests, Canvas orchestration, and the `GraceMemory` adapter | Yes |
+| `agi_logging` | Collects `/rosout`, writes JSONL logs, and publishes `/agi/logs` | Yes |
+| `rosbridge_server` | ROS WebSocket bridge started by `launch.sh` | Yes, from the ROS distribution |
+| `telepathic_management` | Telepathy WebUI server, started as `telepathic_console`; it sends/receives ROS traffic through rosbridge | No; standalone web process in a ROS package |
+| `agi_memory` (Psyche) | Reusable Python memory library imported by `aiva_chat` | No; a ROS package for discovery/build ordering |
+| `aiva_cryptic_signal_core` and `cryptic_signal_core` (Cypher) | Encoding library and ROS message definitions | No |
+| `scs` / `aiva-presence` | HTTP heartbeat process for the Web Teleops Console | No; standalone process packaged for `ros2 run` |
+| Canvas, Imaging, llama.cpp, MossInfer | Python capabilities, model service, or painting sidecar used by the chat flow | No |
+
+Memory currently runs in the `aiva_chat` process and stores data in SQLite.
+Keep it as a library unless several ROS processes need to share one memory
+service. Likewise, Canvas and Imaging do not need ROS wrappers unless other ROS
+processes need to invoke them through ROS topics, services, or actions.
+
+`launch.sh` starts rosbridge, the log collector, the Telepathy web process, and
+the chat node (unless `AIVA_START_CHAT=0`). The llama.cpp router may be managed
+by systemd or launched as a child process; it is not a ROS node.
 
 The launcher opens `http://127.0.0.1:8853` and writes service logs under
 `~/.local/state/agi/aiva/`. Press Ctrl+C to stop the services. Set
@@ -36,18 +61,18 @@ A second job builds the AIVA ROS packages on Jazzy and sends messages through a
 real ROS graph. Run the non-ROS tests from the parent directory of your AIVA checkout with:
 
 ```sh
-python3 -m pip install pytest -r AIVA/requirements.txt
-PYTHONPATH=AIVA/src/central_neural_system/aiva_chat:AIVA/src/central_neural_system/aiva_cryptic_signal_core:AIVA/src/cryptic_signal_core \
-  python3 -m pytest -q AIVA/src/central_neural_system/aiva_chat/test AIVA/src/central_neural_system/aiva_cryptic_signal_core/test
+python3 -m pip install pytest -r AIVA/soma/requirements.txt
+PYTHONPATH=AIVA/soma/src/central_neural_system/aiva_chat:AIVA/soma/src/central_neural_system/aiva_cryptic_signal_core:AIVA/soma/src/cryptic_signal_core \
+  python3 -m pytest -q AIVA/soma/src/central_neural_system/aiva_chat/test AIVA/soma/src/central_neural_system/aiva_cryptic_signal_core/test
 ```
 
 Packages grouped under `src/central_neural_system/` belong to AIVA's central neural system. For
 example, `src/central_neural_system/aiva_cryptic_signal_core` is AIVA's encoding scheme registry. Shared ROS messages and the base text codec come from [AGi-Robot/cypher](https://github.com/AGi-robot/cypher), linked at `src/cryptic_signal_core`. Clone Cypher beside AIVA with `git clone https://github.com/AGi-robot/cypher.git ~/AGi/cypher`. Colcon discovers the packages beneath the source directories; build the chat and console with:
 
 ```sh
-cd ~/AGi/AIVA
+cd ~/AGi/AIVA/soma
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-up-to aiva_chat telepathic_management
+colcon build --packages-up-to aiva_chat telepathic_management agi_logging agi_memory
 ```
 
 The shared WebUI backend uses AIVA's `CrypticSignalCore` when the AIVA package is
@@ -80,11 +105,11 @@ node sends the latest 8 exchanges to the LLM as active context; older turns
 remain stored but are not semantically recalled yet.
 
 The reusable SQLite conversation store is provided by
-[Mind](https://github.com/AGi-robot/mind) (`agi-memory`), installed through
+[Psyche](https://github.com/AGi-robot/psyche) (`agi-memory`), installed through
 `requirements.txt`. AIVA's `GraceMemory` adapter extends that store with
 Grace-specific Canvas study records and trims legacy drawing payloads from
 chat context. AIVA still configures the database path and decides what context
-to send to the model; Mind does not run the chat loop or perform semantic
+to send to the model; Psyche does not run the chat loop or perform semantic
 recall. Existing SQLite history opens in place. After updating AIVA, install
 the dependency in its runtime environment with
 `.venv/bin/python -m pip install -r requirements.txt`.
@@ -99,6 +124,15 @@ points elsewhere. For a different endpoint, set `AIVA_LLM_BASE_URL` and
 `AIVA_LLM_MODEL`. Preloading is skipped for non-local, non-Ollama-compatible
 endpoints; set `AIVA_PRELOAD_LLM=0` to disable preloading entirely.
 
+Psyche is checked out at `~/AGi/AIVA/psyche`; the `agi_memory` ROS package is
+linked from `AIVA/soma/src/agi_memory` to `AIVA/psyche/memory`. If the link is
+missing, recreate it from the soma repository root with:
+
+```sh
+cd ~/AGi/AIVA/soma
+ln -s ../../psyche/memory src/agi_memory
+```
+
 The shared Telepathy console is maintained in [AGi-robot/telepathy](https://github.com/AGi-robot/telepathy). Clone it beside this repository so the existing `src/telepathic_management` link resolves:
 
 ```sh
@@ -109,18 +143,19 @@ git clone https://github.com/AGi-robot/telepathy.git telepathy
 Build the AIVA packages from this workspace:
 
 ```sh
-cd ~/AGi/AIVA
+cd ~/AGi/AIVA/soma
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-up-to telepathic_management aiva_chat
+colcon build --packages-up-to telepathic_management aiva_chat agi_logging agi_memory
 source install/setup.bash
 ```
 
 To run services manually, start Ollama (or another compatible server), then open
-separate terminals, source `AIVA/install/setup.bash` in each, and run:
+separate terminals, source `install/setup.bash` from the soma repository in each, and run:
 
 ```sh
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml address:=127.0.0.1
 ros2 run aiva_chat aiva_chat
+ros2 run agi_logging agi_log_collector
 ros2 run telepathic_management telepathic_console
 ```
 
@@ -148,7 +183,7 @@ Install/build the AIVA workspace, configure the AuRoRA Web Teleops Console's Tai
 URL, and run this as a user service on the AIVA PC:
 
 ```sh
-cd ~/AGi/AIVA
+cd ~/AGi/AIVA/soma
 source /opt/ros/jazzy/setup.bash
 colcon build --packages-select scs
 source install/setup.bash
@@ -168,7 +203,7 @@ building the package:
 ```sh
 mkdir -p ~/.config/agi ~/.config/systemd/user
 printf '%s\n' 'AGI_WEB_TELEOPS_CONSOLE_PRESENCE_URL=https://your-aurora-machine.your-tailnet.ts.net/api/presence/aiva' > ~/.config/agi/aiva-presence.env
-cp ~/AGi/AIVA/systemd/agi-aiva-presence.service ~/.config/systemd/user/
+cp ~/AGi/AIVA/soma/systemd/agi-aiva-presence.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now agi-aiva-presence.service
 ```

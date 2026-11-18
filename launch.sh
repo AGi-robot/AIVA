@@ -5,10 +5,10 @@ set -Eeuo pipefail
 # --- Paths -------------------------------------------------------------------
 # Absolute path of the folder containing this script (not the user's current directory)
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# Repository root, one level above this script
-REPO_DIR="$(dirname -- "$SCRIPT_DIR")"
-CANVAS_SOURCE_DIR="${AGI_CANVAS_SOURCE_DIR:-$REPO_DIR/capability/canvas}"
-IMAGING_SOURCE_DIR="${AGI_IMAGING_SOURCE_DIR:-$REPO_DIR/capability/imaging}"
+# AGi checkout root, two levels above this script (AIVA/soma/launch.sh)
+AGI_ROOT_DIR="${AGI_ROOT_DIR:-$(cd -- "$SCRIPT_DIR/../.." && pwd)}"
+CANVAS_SOURCE_DIR="${AGI_CANVAS_SOURCE_DIR:-$AGI_ROOT_DIR/capability/canvas}"
+IMAGING_SOURCE_DIR="${AGI_IMAGING_SOURCE_DIR:-$AGI_ROOT_DIR/capability/imaging}"
 # Python venv location (default: .venv next to this script; override with AIVA_VENV)
 VENV_DIR="${AIVA_VENV:-$SCRIPT_DIR/.venv}"
 
@@ -36,7 +36,7 @@ LLM_MODEL="${AIVA_LLM_MODEL:-ministral-3-14b-instruct-2512}"
 # --- llama.cpp router binaries and model presets ------------------------------
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
 LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-$LLAMA_CPP_DIR/build/bin/llama-server}"
-LLAMA_ROUTER_INI="${LLAMA_ROUTER_INI:-$REPO_DIR/models/llama-router.ini}"
+LLAMA_ROUTER_INI="${LLAMA_ROUTER_INI:-$AGI_ROOT_DIR/models/llama-router.ini}"
 LLM_KEEP_ALIVE="${AIVA_LLM_KEEP_ALIVE:--1}"
 if [[ "$LLM_KEEP_ALIVE" == "-1" ]]; then
   LLM_KEEP_ALIVE_LABEL="indefinitely"
@@ -52,7 +52,7 @@ export LD_LIBRARY_PATH="$LLAMA_CPP_DIR/build/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_
 export AIVA_LLM_BASE_URL="$LLM_BASE_URL"
 export AIVA_LLM_MODEL="$LLM_MODEL"
 export AIVA_EMBED_BASE_URL="$EMBED_BASE_URL"
-export MOSS_PAINT_WEIGHTS_ROOT="${MOSS_PAINT_WEIGHTS_ROOT:-$REPO_DIR/models/mossimage}"
+export MOSS_PAINT_WEIGHTS_ROOT="${MOSS_PAINT_WEIGHTS_ROOT:-$AGI_ROOT_DIR/models/mossimage}"
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
   C_RESET=$'\033[0m'
@@ -151,8 +151,19 @@ if ! "$AIVA_ROS_PYTHON" -c 'import rclpy, httpx' >/dev/null 2>&1; then
   exit 1
 fi
 
+for source_package in \
+  "$SCRIPT_DIR/src/cryptic_signal_core/package.xml" \
+  "$SCRIPT_DIR/src/telepathic_management/package.xml" \
+  "$SCRIPT_DIR/src/agi_memory/package.xml"; do
+  if [[ ! -f "$source_package" ]]; then
+    error "Required ROS package source is missing: $source_package"
+    info "See $SCRIPT_DIR/README.md for the Cypher, Telepathy, and Psyche checkout/link setup."
+    exit 1
+  fi
+done
+
 if [[ "$START_CHAT" == "1" ]] && ! "$AIVA_ROS_PYTHON" -c 'from memory.conversation import ConversationStore' >/dev/null 2>&1; then
-  error "The AIVA venv cannot import the Mind conversation store."
+  error "The AIVA venv cannot import the Psyche conversation store."
   printf '  %q -m pip install -r %q\n' "$AIVA_ROS_PYTHON" "$SCRIPT_DIR/requirements.txt"
   exit 1
 fi
