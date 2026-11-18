@@ -33,10 +33,10 @@ GitHub Actions checks pushes and pull requests targeting `dev`. Its fast job
 validates `launch.sh`, tests whether it starts chat only when enabled, exercises
 the ROS chat adapter with message doubles, and tests memory and signal encoding.
 A second job builds the AIVA ROS packages on Jazzy and sends messages through a
-real ROS graph. Run the non-ROS tests from the repository root with:
+real ROS graph. Run the non-ROS tests from the parent directory of your AIVA checkout with:
 
 ```sh
-python3 -m pip install pytest httpx
+python3 -m pip install pytest -r AIVA/requirements.txt
 PYTHONPATH=AIVA/src/central_neural_system/aiva_chat:AIVA/src/central_neural_system/aiva_cryptic_signal_core:AIVA/src/cryptic_signal_core \
   python3 -m pytest -q AIVA/src/central_neural_system/aiva_chat/test AIVA/src/central_neural_system/aiva_cryptic_signal_core/test
 ```
@@ -77,7 +77,11 @@ and publishes `start` / `delta` / `done` response events on
 in SQLite at `~/.agi/profile/grace_memory.sqlite3` by default. The path follows
 the `agi_home` parameter and can be overridden with `AIVA_MEMORY_PATH`. The
 node sends the latest 8 exchanges to the LLM as active context; older turns
-remain stored but are not semantically recalled yet.
+remain stored but are not semantically recalled yet. The Python dependency
+`agi-memory` from [Mind](https://github.com/AGi-robot/mind) owns conversation
+storage. AIVA keeps the database path and its Canvas-specific context handling.
+Existing SQLite history opens in place. If you already have a venv, rerun
+`.venv/bin/python -m pip install -r requirements.txt` after updating AIVA.
 
 Grace's language models run on a single llama.cpp router: one `llama-server`
 serves chat and vision (Ministral 3 14B Instruct 2512, with its `mmproj` vision
