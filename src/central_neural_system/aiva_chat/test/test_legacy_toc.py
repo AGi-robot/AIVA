@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 
-ROOT = Path(__file__).resolve().parents[5]
+ROOT = Path(__file__).resolve().parents[6]
 sys.path.insert(0, str(ROOT / 'AuRoRA/src/tms'))
 sys.path.insert(0, str(ROOT / 'AuRoRA/src/hrs'))
 sys.path.insert(0, str(ROOT / 'AuRoRA/src/gms'))

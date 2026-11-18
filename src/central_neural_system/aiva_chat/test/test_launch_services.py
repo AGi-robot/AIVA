@@ -7,8 +7,7 @@ from pathlib import Path
 import pytest
 
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
-LAUNCH_SCRIPT = REPO_ROOT / "AIVA" / "launch.sh"
+LAUNCH_SCRIPT = Path(__file__).resolve().parents[4] / "launch.sh"
 
 
 @pytest.fixture
@@ -29,6 +28,11 @@ def fake_aiva(tmp_path):
     marker = aiva / "install" / "fake_pkg" / "share" / "ament_index" / "resource_index" / "packages" / "fake_pkg"
     marker.parent.mkdir(parents=True)
     marker.touch()
+
+    for package in ("cryptic_signal_core", "telepathic_management", "agi_memory"):
+        package_dir = aiva / "src" / package
+        package_dir.mkdir(parents=True)
+        (package_dir / "package.xml").touch()
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

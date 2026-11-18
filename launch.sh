@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # --- Paths -------------------------------------------------------------------
 # Absolute path of the folder containing this script (not the user's current directory)
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# AGi checkout root, two levels above this script (AIVA/soma/launch.sh)
+# AGi checkout root, two levels above this script (AIVA/shell/launch.sh)
 AGI_ROOT_DIR="${AGI_ROOT_DIR:-$(cd -- "$SCRIPT_DIR/../.." && pwd)}"
 CANVAS_SOURCE_DIR="${AGI_CANVAS_SOURCE_DIR:-$AGI_ROOT_DIR/capability/canvas}"
 IMAGING_SOURCE_DIR="${AGI_IMAGING_SOURCE_DIR:-$AGI_ROOT_DIR/capability/imaging}"
@@ -23,15 +23,16 @@ WORKSPACE_SETUP="$SCRIPT_DIR/install/setup.bash"
 TELEPATHIC_CONSOLE_HOST="${TELEPATHIC_CONSOLE_HOST:-127.0.0.1}"
 TELEPATHIC_CONSOLE_PORTAL="${TELEPATHIC_CONSOLE_PORTAL:-8853}"
 TELEPATHIC_GATEWAY="${TELEPATHIC_GATEWAY:-http://${TELEPATHIC_CONSOLE_HOST}:${TELEPATHIC_CONSOLE_PORTAL}}"
+export TELEPATHIC_CONSOLE_HOST TELEPATHIC_CONSOLE_PORTAL
 
 START_CHAT="${AIVA_START_CHAT:-1}"
 # Grace runs on a single llama.cpp router: one llama-server process serves
-# chat/vision (Ministral) and embeddings (voyage-4-nano) on one port,
-# routing by the request's "model" name (AIVA/llama-router.ini).
+# chat (Ministral) and embeddings (voyage-4-nano) on one port,
+# routing by the request's "model" name (models/llama-router.ini).
 LLM_PORT="${AIVA_LLM_PORT:-8080}"
 LLM_BASE_URL="${AIVA_LLM_BASE_URL:-http://127.0.0.1:${LLM_PORT}/v1}"
 EMBED_BASE_URL="${AIVA_EMBED_BASE_URL:-$LLM_BASE_URL}"
-LLM_MODEL="${AIVA_LLM_MODEL:-ministral-3-14b-instruct-2512}"
+LLM_MODEL="${AIVA_LLM_MODEL:-ministral-3-8b-uncensored}"
 
 # --- llama.cpp router binaries and model presets ------------------------------
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
@@ -139,7 +140,10 @@ AIVA_ROS_PYTHON="$VENV_DIR/bin/python"
 # interpreter even when this workspace was built with the AIVA venv. Expose
 # the venv's packages to those processes without installing into system Python.
 VENV_SITE_PACKAGES="$($AIVA_ROS_PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-for package_source in "$CANVAS_SOURCE_DIR/src" "$IMAGING_SOURCE_DIR/src"; do
+for package_source in \
+  "$CANVAS_SOURCE_DIR/src" \
+  "$IMAGING_SOURCE_DIR/src" \
+  "$SCRIPT_DIR/src/agi_memory/src"; do
   if [[ -d "$package_source" ]]; then
     PYTHONPATH="$package_source${PYTHONPATH:+:$PYTHONPATH}"
   fi
@@ -157,13 +161,13 @@ for source_package in \
   "$SCRIPT_DIR/src/agi_memory/package.xml"; do
   if [[ ! -f "$source_package" ]]; then
     error "Required ROS package source is missing: $source_package"
-    info "See $SCRIPT_DIR/README.md for the Cypher, Telepathy, and Psyche checkout/link setup."
+    info "See $SCRIPT_DIR/README.md for the Cypher, Telepathy, and Memory checkout/link setup."
     exit 1
   fi
 done
 
 if [[ "$START_CHAT" == "1" ]] && ! "$AIVA_ROS_PYTHON" -c 'from memory.conversation import ConversationStore' >/dev/null 2>&1; then
-  error "The AIVA venv cannot import the Psyche conversation store."
+  error "The AIVA venv cannot import the Memory conversation store."
   printf '  %q -m pip install -r %q\n' "$AIVA_ROS_PYTHON" "$SCRIPT_DIR/requirements.txt"
   exit 1
 fi
@@ -509,7 +513,7 @@ start_llama_backends() {
       error "llama.cpp router did not become healthy; check: journalctl --user -u agi-llm-router"
       return 1
     fi
-    success "Router ready  ${C_DIM}(Ministral-3-14B + voyage-4-nano · :$LLM_PORT)${C_RESET}"
+    success "Router ready  ${C_DIM}(Ministral-3-8B + voyage-4-nano · :$LLM_PORT)${C_RESET}"
     return 0
   fi
 
@@ -530,7 +534,9 @@ start_llama_backends() {
     fi
   fi
 }
-start_llama_backends
+if [[ "$START_CHAT" == "1" ]]; then
+  start_llama_backends
+fi
 
 start_service rosbridge ros2 launch rosbridge_server rosbridge_websocket_launch.xml address:=127.0.0.1
 start_service log-collector ros2 run agi_logging agi_log_collector
