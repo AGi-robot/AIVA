@@ -77,11 +77,17 @@ and publishes `start` / `delta` / `done` response events on
 in SQLite at `~/.agi/profile/grace_memory.sqlite3` by default. The path follows
 the `agi_home` parameter and can be overridden with `AIVA_MEMORY_PATH`. The
 node sends the latest 8 exchanges to the LLM as active context; older turns
-remain stored but are not semantically recalled yet. The Python dependency
-`agi-memory` from [Mind](https://github.com/AGi-robot/mind) owns conversation
-storage. AIVA keeps the database path and its Canvas-specific context handling.
-Existing SQLite history opens in place. If you already have a venv, rerun
-`.venv/bin/python -m pip install -r requirements.txt` after updating AIVA.
+remain stored but are not semantically recalled yet.
+
+The reusable SQLite conversation store is provided by
+[Mind](https://github.com/AGi-robot/mind) (`agi-memory`), installed through
+`requirements.txt`. AIVA's `GraceMemory` adapter extends that store with
+Grace-specific Canvas study records and trims legacy drawing payloads from
+chat context. AIVA still configures the database path and decides what context
+to send to the model; Mind does not run the chat loop or perform semantic
+recall. Existing SQLite history opens in place. After updating AIVA, install
+the dependency in its runtime environment with
+`.venv/bin/python -m pip install -r requirements.txt`.
 
 Grace's language models run on a single llama.cpp router: one `llama-server`
 serves chat and vision (Ministral 3 14B Instruct 2512, with its `mmproj` vision
