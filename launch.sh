@@ -151,6 +151,12 @@ if ! "$AIVA_ROS_PYTHON" -c 'import rclpy, httpx' >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ "$START_CHAT" == "1" ]] && ! "$AIVA_ROS_PYTHON" -c 'from memory.conversation import ConversationStore' >/dev/null 2>&1; then
+  error "The AIVA venv cannot import the Mind conversation store."
+  printf '  %q -m pip install -r %q\n' "$AIVA_ROS_PYTHON" "$SCRIPT_DIR/requirements.txt"
+  exit 1
+fi
+
 if ! command -v colcon >/dev/null 2>&1; then
   error "colcon is unavailable; cannot build the AIVA workspace."
   exit 1
