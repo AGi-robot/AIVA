@@ -62,7 +62,6 @@ exec sleep 60
         # The launch-service tests exercise ROS/WebUI lifecycle only; keep
         # them independent of a local llama.cpp binary and model files.
         "AIVA_LLM_BASE_URL": "http://llm.test/v1",
-        "AIVA_PRELOAD_LLM": "0",
         "TELEPATHIC_GATEWAY": "http://127.0.0.1:9999",
         "HOME": str(tmp_path),
         "NO_COLOR": "1",

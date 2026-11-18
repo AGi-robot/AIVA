@@ -38,13 +38,6 @@ LLM_MODEL="${AIVA_LLM_MODEL:-ministral-3-8b-uncensored}"
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/llama.cpp}"
 LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-$LLAMA_CPP_DIR/build/bin/llama-server}"
 LLAMA_ROUTER_INI="${LLAMA_ROUTER_INI:-$AGI_ROOT_DIR/models/llama-router.ini}"
-LLM_KEEP_ALIVE="${AIVA_LLM_KEEP_ALIVE:--1}"
-if [[ "$LLM_KEEP_ALIVE" == "-1" ]]; then
-  LLM_KEEP_ALIVE_LABEL="indefinitely"
-else
-  LLM_KEEP_ALIVE_LABEL="$LLM_KEEP_ALIVE"
-fi
-PRELOAD_LLM="${AIVA_PRELOAD_LLM:-1}"
 AGI_HOME="${AGI_HOME:-$HOME/.agi}"
 LOG_DIR="${AIVA_LOG_DIR:-$AGI_HOME/log}"
 export AGI_HOME AGI_LOG_DIR="$LOG_DIR" ROS_LOG_DIR="$LOG_DIR/ros"
@@ -185,7 +178,7 @@ if [[ ${#WORKSPACE_PACKAGES[@]} -eq 0 ]]; then
 fi
 
 mkdir -p "$LOG_DIR" "$ROS_LOG_DIR"
-stage "01 / 04" "Build workspace"
+stage "01 / 03" "Build workspace"
 build_workspace() {
   (cd "$SCRIPT_DIR" && colcon build --cmake-args "-DPython3_EXECUTABLE=$AIVA_ROS_PYTHON")
 }
@@ -257,62 +250,6 @@ then
   info "Find it with: sudo ss -ltnp 'sport = :9090'"
   info "Stop the stale AIVA launch before starting another one."
   exit 1
-fi
-
-if [[ "$START_CHAT" == "1" && "$PRELOAD_LLM" != "0" ]]; then
-  stage "02 / 04" "Warm up Grace's language model"
-  info "Model: $LLM_MODEL  ${C_DIM}· keep alive: $LLM_KEEP_ALIVE_LABEL${C_RESET}"
-  preload_llm() {
-    "$AIVA_ROS_PYTHON" - "$LLM_BASE_URL" "$LLM_MODEL" "$LLM_KEEP_ALIVE" <<'PY'
-import json
-import sys
-import time
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
-
-base_url, model, keep_alive = sys.argv[1:]
-parsed = urlsplit(base_url)
-if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or parsed.port != 11434:
-    print("Skipping preload: the configured LLM endpoint is not local Ollama on port 11434.")
-    raise SystemExit(0)
-
-origin = f"{parsed.scheme}://{parsed.netloc}"
-keep_alive_value = -1 if keep_alive == "-1" else keep_alive
-request = Request(
-    f"{origin}/api/generate",
-    data=json.dumps({"model": model, "keep_alive": keep_alive_value, "stream": False}).encode(),
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
-deadline = time.monotonic() + 30
-while True:
-    try:
-        with urlopen(request, timeout=300) as response:
-            result = json.load(response)
-        if result.get("error"):
-            print(f"Ollama preload failed: {result['error']}", file=sys.stderr)
-            raise SystemExit(1)
-        print(f"LLM ready: {result.get('model', model)}")
-        break
-    except HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        print(f"Ollama preload failed (HTTP {error.code}): {detail}", file=sys.stderr)
-        raise SystemExit(1)
-    except (URLError, TimeoutError, OSError) as error:
-        if time.monotonic() >= deadline:
-            print(f"Could not preload Ollama model from {origin}: {error}", file=sys.stderr)
-            raise SystemExit(1)
-        time.sleep(0.5)
-PY
-  }
-  if ! run_spinner "Loading model into Ollama" "$LOG_DIR/llm-preload.log" preload_llm; then
-    error "Set AIVA_PRELOAD_LLM=0 to skip model preloading."
-    exit 1
-  fi
-elif [[ "$START_CHAT" == "1" ]]; then
-  stage "02 / 04" "Warm up Grace's language model"
-  warn "Preloading disabled (AIVA_PRELOAD_LLM=0)."
 fi
 
 pids=()
@@ -455,7 +392,7 @@ trap cleanup EXIT
 trap 'handle_signal INT' INT
 trap 'handle_signal TERM' TERM
 
-stage "03 / 04" "Start AIVA services"
+stage "02 / 03" "Start AIVA services"
 
 # Start the llama.cpp backends unless their ports are already served (for
 # example by a manually launched llama-server). External listeners are left
@@ -545,7 +482,7 @@ if [[ "$START_CHAT" == "1" ]]; then
 fi
 start_service webui ros2 run telepathic_management telepathic_console
 
-stage "04 / 04" "Connect the WebUI"
+stage "03 / 03" "Connect the WebUI"
 wait_for_webui() {
   "$AIVA_ROS_PYTHON" - "$TELEPATHIC_GATEWAY" <<'PY'
 import sys

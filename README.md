@@ -142,9 +142,7 @@ routing by the request's model name (`models/llama-router.ini`). The launcher st
 the `agi-llm-router` systemd user unit when it exists, keeps the models loaded
 according to `load-on-startup` and the router cache policy, and skips it when `AIVA_LLM_BASE_URL`
 points elsewhere. For a different endpoint, set `AIVA_LLM_BASE_URL` and
-`AIVA_LLM_MODEL`. Preloading is skipped for non-local, non-Ollama-compatible
-endpoints; set `AIVA_PRELOAD_LLM=0` to skip the Ollama preload step.
-`AIVA_LLM_KEEP_ALIVE` applies only to that Ollama preload API.
+`AIVA_LLM_MODEL`.
 The default chat model has no vision projector. For image input or reference
 drawing, set `AIVA_LLM_MODEL=swift15-qwen3.8-27b` before launching.
 
