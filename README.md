@@ -7,15 +7,17 @@ Open the AGi workspace in VS Code. The ROS workspace lives in the separate
 To start the local WebUI, rosbridge, and chat node together, run:
 
 ```sh
-cd ~/AGi/AIVA/shell
+cd ~/AGi/AIVA
 /usr/bin/python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pip install -r requirements.txt
+cd shell
 ../launch.sh
 ```
 
 The venv includes the system ROS 2 Python packages through
 `--system-site-packages`; this lets the chat node use ROS Jazzy's `rclpy` while
-keeping pip-installed AIVA dependencies inside `AIVA/shell/.venv`. `launch.sh`
+keeping pip-installed AIVA dependencies inside `AIVA/.venv`. `requirements.txt`
+and the venv live at the AIVA root. `launch.sh`
 (lives at `AIVA/launch.sh`, one level up) builds
 with that venv's Python and starts the AIVA services with it. If you keep the
 venv elsewhere, set `AIVA_VENV=/path/to/venv` when launching.
@@ -80,11 +82,11 @@ at a different path.
 The parent AGi repository has GitHub Actions jobs for the shared Telepathy and
 Cypher packages. Shell also includes local launcher lifecycle, chat adapter,
 memory, drawing, and ROS graph checks. Install the local editable Memory
-package and test dependencies with the same venv from the Shell directory, then
-run non-ROS checks from `~/AGi`:
+package and test dependencies with AIVA's root venv, then run non-ROS checks from
+`~/AGi`:
 
 ```sh
-cd ~/AGi/AIVA/shell
+cd ~/AGi/AIVA
 .venv/bin/python -m pip install pytest -r requirements.txt
 cd ~/AGi
 PYTHONPATH=capability/canvas/src:capability/imaging/src:AIVA/shell/src/central_neural_system/aiva_chat:AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core:AIVA/shell/src/cryptic_signal_core \
@@ -131,14 +133,14 @@ remain stored but are not semantically recalled yet.
 
 The reusable SQLite conversation store is provided by
 [Memory](https://github.com/AGi-robot/memory) (`agi-memory`), installed as an
-editable Python package from `../mind/memory` through `requirements.txt`. AIVA's
+editable Python package from `./mind/memory` through AIVA's root `requirements.txt`. AIVA's
 `GraceMemory` adapter extends that store with
 Grace-specific Canvas study records and trims legacy drawing payloads from
 chat context. AIVA still configures the database path and decides what context
 to send to the model; Memory does not run the chat loop or perform semantic
 recall. Existing SQLite history opens in place. After updating AIVA, install
 the dependency in its runtime environment with
-`.venv/bin/python -m pip install -r requirements.txt`.
+`../.venv/bin/python -m pip install -r ../requirements.txt` from `AIVA/shell`.
 
 Grace's language models run on a single llama.cpp router: one `llama-server`
 serves chat (`ministral-3-8b-uncensored`), embeddings (`voyage-4-nano`), and
@@ -179,8 +181,8 @@ system interpreter):
 ```sh
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-source .venv/bin/activate
-export PYTHONPATH="$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')${PYTHONPATH:+:$PYTHONPATH}"
+source ../.venv/bin/activate
+export PYTHONPATH="$(../.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')${PYTHONPATH:+:$PYTHONPATH}"
 export AIVA_LLM_MODEL="${AIVA_LLM_MODEL:-ministral-3-8b-uncensored}"
 ```
 
