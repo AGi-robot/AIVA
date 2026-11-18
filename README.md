@@ -150,8 +150,10 @@ the `agi-llm-router` systemd user unit when it exists, keeps the models loaded
 according to `load-on-startup` and the router cache policy, and skips it when `AIVA_LLM_BASE_URL`
 points elsewhere. For a different endpoint, set `AIVA_LLM_BASE_URL` and
 `AIVA_LLM_MODEL`.
-The default chat model has no vision projector. For image input or reference
-drawing, set `AIVA_LLM_MODEL=swift15-qwen3.8-27b` before launching.
+The default chat model has no vision projector. For image input in chat, set
+`AIVA_LLM_MODEL=swift15-qwen3.8-27b` before launching. Canvas drawing uses the
+vision-capable Swift model by default through `AIVA_DRAW_MODEL`; override that
+variable to select a different drawing model.
 
 Memory is checked out at `~/AGi/AIVA/mind/memory` and installed into the Shell
 virtual environment with the other Python requirements. It is a Python library,
@@ -258,11 +260,18 @@ remain visible to ROS monitoring tools. Local WebUI use needs no API key. Set
 `AGI_CANVAS_API_KEY` on the host if trusted external clients such as AuRoRA should call the
 WebSocket API directly; expose it through HTTPS/WSS and pass the key as the initial auth frame.
 
-Canvas generation uses at most four streamed passes, limited to 16, 10, 8, then 6 actions,
-31 points per new contour, and 3,072 output tokens each. Complete actions from a
-truncated tool response are retained; continuation receives their assigned IDs
-and a compact summary so it can finish without replaying the same actions. The
-UI marks an unfinished result as a draft and keeps received actions on errors.
+Canvas generation uses the measured Swift recipe by default: `AIVA_DRAW_MODEL`
+selects `swift15-qwen3.8-27b`, each request uses temperature 0, medium reasoning,
+6,144 output tokens, and a JSON-schema response grammar that requires action kind
+and explicit stroke/fill colors. The node streams JSON content, validates and
+repairs complete actions independently, and enforces the cubic curve point
+grammar (4, 7, 10, …, 31). It uses at most four passes, limited to 16, 10, 8,
+then 6 actions. Complete actions from a truncated response are retained;
+continuation receives their assigned IDs and a compact summary so it can finish
+without replaying the same actions. The UI marks an unfinished result as a draft
+and keeps received actions on errors. `AIVA_DRAW_MAX_TOKENS` and
+`AIVA_DRAW_REASONING_EFFORT` can override the generation budget and reasoning
+setting. Do not disable thinking while using the JSON-schema grammar.
 `AIVA_DRAW_MAX_SECONDS` defaults to 240; this request budget is checked between
 passes and streamed events. The existing `AIVA_DRAW_TIMEOUT_SECONDS` still bounds
 idle reads, capped by the remaining request budget when each pass starts. A slow

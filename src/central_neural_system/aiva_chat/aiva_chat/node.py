@@ -106,6 +106,10 @@ class AivaChat(Node):
             "llm_model",
             os.getenv("AIVA_LLM_MODEL", "ministral-3-8b-uncensored"),
         )
+        self.declare_parameter(
+            "draw_model",
+            os.getenv("AIVA_DRAW_MODEL", "swift15-qwen3.8-27b"),
+        )
         self.declare_parameter("system_prompt", _load_soul())
         self.declare_parameter("agi_home", os.getenv("AGI_HOME", "~/.agi"))
         default_memory_path = (
@@ -116,6 +120,8 @@ class AivaChat(Node):
         self.declare_parameter("memory_turns", 8)
         self._base_url = str(self.get_parameter("llm_base_url").value).rstrip("/")
         self._model = str(self.get_parameter("llm_model").value)
+        self._draw_model = str(self.get_parameter("draw_model").value)
+        self._draw_max_tokens = max(1, int(os.getenv("AIVA_DRAW_MAX_TOKENS", "6144")))
         self._system_prompt = str(self.get_parameter("system_prompt").value)
         profile_path = Path(str(self.get_parameter("agi_home").value)).expanduser() / "profile" / "user.md"
         try:
@@ -162,7 +168,7 @@ class AivaChat(Node):
         self.get_logger().info(
             f"AIVA chat listening on {self.get_parameter('input_topic').value} and "
             f"WebUI input {self.get_parameter('webui_input_topic').value}; "
-            f"LLM={self._base_url} model={self._model}"
+            f"LLM={self._base_url} chat_model={self._model} draw_model={self._draw_model}"
         )
 
     def _submit_prompt(self, text: str, identifier: str = "") -> None:
@@ -578,12 +584,13 @@ class AivaChat(Node):
     def _drawing_pass(self, messages, identifier, prepared, deadline, action_limit,
                       allow_canvas_text=True, allow_paints=False, paint_budget=2, require_vision=False):
         """Only publish complete, validated actions; never replay a truncated JSON suffix."""
-        tool = deepcopy(DRAW_TOOL)
-        schema = tool['function']['parameters']['properties']['actions']
-        schema['maxItems'] = action_limit
+        schema = deepcopy(DRAW_TOOL['function']['parameters'])
+        schema['properties']['actions']['maxItems'] = action_limit
+        schema['properties']['actions']['items']['required'] = ['kind', 'color', 'fill_color']
         if not allow_paints or paint_budget == 0:
-            schema['items']['properties']['kind']['enum'].remove('image')
-            schema['items']['properties'].pop('prompt', None)
+            schema['properties']['actions']['items']['properties']['kind']['enum'].remove('image')
+            schema['properties']['actions']['items']['properties'].pop('prompt', None)
+        schema['required'] = ['actions', 'more', 'response']
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         has_images = any(isinstance(message.get("content"), list) for message in messages)
         retry_without_vision = False
@@ -646,17 +653,19 @@ class AivaChat(Node):
                                    "actions": vectors})
 
         while True:
-            request = {"model": self._model,
+            request = {"model": getattr(self, '_draw_model', self._model),
                        "messages": self._strip_images(messages) if retry_without_vision else messages,
-                       "tools": [tool],
-                       "tool_choice": {"type": "function", "function": {"name": "canvas_draw"}},
-                       "parallel_tool_calls": False, "max_tokens": 3072, "stream": True}
+                       "response_format": {"type": "json_schema", "json_schema": {
+                           "name": "canvas_draw", "schema": schema}},
+                       "temperature": 0.0,
+                       "reasoning_effort": os.getenv("AIVA_DRAW_REASONING_EFFORT", "medium"),
+                       "max_tokens": getattr(self, '_draw_max_tokens', 6144), "stream": True}
             arguments, function_name, response_text, finish_reason = "", "", "", None
             with httpx.stream("POST", f"{self._base_url}/chat/completions", json=request,
                               headers=headers, timeout=httpx.Timeout(connect=10, read=min(self._draw_timeout, max(1, deadline - perf_counter())), write=30, pool=10)) as response:
                 if response.is_error:
                     detail = response.read().decode("utf-8", errors="replace").strip().replace("\n", " ")[:1200]
-                    if has_images and not retry_without_vision and response.status_code in (400, 404, 422):
+                    if has_images and not retry_without_vision and response.status_code in (400, 404, 422, 500):
                         # The endpoint may not accept image content; degrade to text once.
                         if require_vision:
                             raise RuntimeError('The LLM rejected image input. Reference-guided drawing needs a working vision endpoint. ' + detail)
@@ -682,6 +691,9 @@ class AivaChat(Node):
                         finish_reason = choice.get("finish_reason") or finish_reason
                         delta = choice.get("delta", {})
                         response_text += delta.get("content", "") or ""
+                        # Keep compatibility with endpoints that still return the
+                        # old canvas_draw tool envelope, while the AIVA request
+                        # uses constrained JSON content for the measured recipe.
                         for call in delta.get("tool_calls", []):
                             if call.get("index", 0) != 0:
                                 raise ValueError("Use one canvas_draw call per pass")
@@ -692,13 +704,15 @@ class AivaChat(Node):
                             arguments += function.get("arguments", "") or ""
                     if len(arguments) + len(response_text) > 100000:
                         raise ValueError("Drawing response exceeded the bounded pass size")
-                    if function_name == 'canvas_draw':
-                        publish_new(completed_stream_actions(arguments))
+                    if response_text or function_name == 'canvas_draw':
+                        partial = arguments if function_name == 'canvas_draw' else response_text
+                        publish_new(completed_stream_actions(partial))
             break
         if finish_reason == 'length':
             return "", True, deferred
+        raw_result = arguments if function_name == 'canvas_draw' else response_text
         try:
-            result = json.loads(arguments) if arguments else {}
+            result = json.loads(raw_result) if raw_result else {}
         except json.JSONDecodeError:
             return "", True, deferred
         if not isinstance(result, dict):

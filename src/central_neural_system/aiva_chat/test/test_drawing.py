@@ -23,7 +23,10 @@ def _mock_stream(monkeypatch, response):
         message = choice.get('message', {})
         lines = []
         if message.get('content'):
-            lines.append('data: ' + json.dumps({'choices': [{'delta': {'content': message['content']}}]}))
+            content = message['content']
+            fragments = [content[offset:offset + 24] for offset in range(0, len(content), 24)]
+            for fragment in fragments:
+                lines.append('data: ' + json.dumps({'choices': [{'delta': {'content': fragment}}]}))
         for index, call in enumerate(message.get('tool_calls', [])):
             function = call.get('function', {})
             arguments = function.get('arguments', '')
@@ -104,6 +107,7 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     node = AivaChat.__new__(AivaChat)
     node._base_url = 'http://llm.test/v1'
     node._model = 'test'
+    node._draw_model = 'swift15-qwen3.8-27b'
     node._system_prompt = 'You are Grace.'
     node._api_key = ''
     node._draw_timeout = 600
@@ -113,9 +117,10 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     node.get_logger = Mock(return_value=Mock())
     response = Mock()
     response.is_error = False
-    response.json.return_value = {'choices': [{'message': {'tool_calls': [{'function': {
-        'name': 'canvas_draw', 'arguments': json.dumps({'actions': [{'kind': 'text', 'text': 'Hello!', 'x': 20, 'y': 30}], 'response': 'Here is a hello!'})
-    }}]}}]}
+    response.json.return_value = {'choices': [{'message': {
+        'content': json.dumps({'actions': [{'kind': 'text', 'text': 'Hello!', 'x': 20, 'y': 30}],
+                               'response': 'Here is a hello!', 'more': False})
+    }}]}
     request = _mock_stream(monkeypatch, response)
     node._draw('Write hello', 'draw-1', {'objects': []})
     events = [call.args[0] for call in node._publish.call_args_list]
@@ -123,7 +128,16 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     assert events[2]['content'] == 'Here is a hello!'
     assert events[2]['identifier'] == 'draw-1'
     assert events[1]['actions'][0]['text'] == 'Hello!'
-    assert request.call_args.kwargs['json']['tools'][0]['function']['name'] == 'canvas_draw'
+    request_json = request.call_args.kwargs['json']
+    assert request_json['model'] == 'swift15-qwen3.8-27b'
+    assert request_json['response_format']['type'] == 'json_schema'
+    action_schema = request_json['response_format']['json_schema']['schema']['properties']['actions']
+    assert action_schema['items']['required'] == ['kind', 'color', 'fill_color']
+    assert action_schema['items']['properties']['points']['description'].startswith('For curve:')
+    assert request_json['max_tokens'] == 6144
+    assert request_json['reasoning_effort'] == 'medium'
+    assert request_json['temperature'] == 0
+    assert 'tools' not in request_json
     messages = request.call_args.kwargs['json']['messages']
     assert [item['role'] for item in messages] == ['system', 'user', 'assistant', 'user']
     assert messages[1]['content'] == 'My favorite color is coral.'
@@ -135,9 +149,9 @@ def test_model_drawing_tool_is_validated_and_published(tmp_path, monkeypatch):
     assert restored.recent()[-1]['content'].startswith('Here is a hello!')
     assert 'playback not confirmed' in restored.recent()[-1]['content']
 
-    response.json.return_value = {'choices': [{'message': {'tool_calls': [{'function': {
-        'name': 'canvas_draw', 'arguments': json.dumps({'actions': [], 'response': 'A little note for you.'})
-    }}]}}]}
+    response.json.return_value = {'choices': [{'message': {
+        'content': json.dumps({'actions': [], 'response': 'A little note for you.', 'more': False})
+    }}]}
     node._publish.reset_mock()
     node._draw('Write me a note', 'draw-empty', {'objects': []})
     empty_action_events = [call.args[0] for call in node._publish.call_args_list]
@@ -293,7 +307,7 @@ def test_truncated_model_plan_reports_actionable_error_without_painting(tmp_path
     ]
     assert 'complete drawing action' in events[-1]['content']
     assert request.call_count == 4
-    assert request.call_args.kwargs['json']['max_tokens'] == 3072
+    assert request.call_args.kwargs['json']['max_tokens'] == 6144
     assert node._memory.recent() == []
 
 
@@ -345,6 +359,7 @@ def test_oversized_pass_stops_at_budget_and_remembers_already_streamed_actions(t
 def drawing_node(tmp_path):
     node = AivaChat.__new__(AivaChat)
     node._base_url, node._model, node._system_prompt = 'http://llm.test/v1', 'test', 'Grace'
+    node._draw_model, node._draw_max_tokens = 'swift15-qwen3.8-27b', 6144
     node._api_key, node._draw_timeout = '', 600
     node._memory = GraceMemory(str(tmp_path / 'memory.sqlite'))
     node._publish = Mock()
@@ -394,7 +409,7 @@ def test_truncation_continues_from_complete_objects_without_duplicates(tmp_path,
     assert len(ids) == len(set(ids))  # no duplicated objects across passes
     assert ids[0] in request.call_args_list[1].kwargs['json']['messages'][-1]['content']
     assert request.call_count == 2
-    assert request.call_args_list[1].kwargs['json']['tools'][0]['function']['parameters']['properties']['actions']['maxItems'] == 10
+    assert request.call_args_list[1].kwargs['json']['response_format']['json_schema']['schema']['properties']['actions']['maxItems'] == 10
     assert events[-1] == {'type': 'canvas_done', 'identifier': 'garden', 'partial': False}
     assert 'Prepared 5 canvas actions' in node._memory.recent()[-1]['content']
 
@@ -692,7 +707,7 @@ def test_painting_limit_is_enforced_across_passes(tmp_path, monkeypatch):
     assert node._paint.generate.call_count == 2
     assert node._publish.call_args.args[0]['type'] == 'canvas_error'
     assert 'two paintings' in node._publish.call_args.args[0]['content']
-    schema = request.call_args.kwargs['json']['tools'][0]['function']['parameters']
+    schema = request.call_args.kwargs['json']['response_format']['json_schema']['schema']
     assert 'image' not in schema['properties']['actions']['items']['properties']['kind']['enum']
 
 
@@ -714,7 +729,7 @@ def test_reference_guides_strokes_without_becoming_a_canvas_layer(tmp_path, monk
     assert node._await_snapshot.call_count == 1
     for call in request.call_args_list:
         params = call.kwargs['json']
-        assert 'image' not in params['tools'][0]['function']['parameters']['properties']['actions']['items']['properties']['kind']['enum']
+        assert 'image' not in params['response_format']['json_schema']['schema']['properties']['actions']['items']['properties']['kind']['enum']
         image_urls = [part['image_url']['url'] for message in params['messages'] if isinstance(message['content'], list)
                       for part in message['content'] if part['type'] == 'image_url']
         assert reference['src'] in image_urls
@@ -750,7 +765,7 @@ def test_default_mode_never_generates_images_even_if_moss_is_installed(tmp_path,
     request = _mock_stream(monkeypatch, response)
     node._draw('Write hello', 'plain', {'objects': []})
     node._paint.generate.assert_not_called()
-    assert 'image' not in request.call_args.kwargs['json']['tools'][0]['function']['parameters']['properties']['actions']['items']['properties']['kind']['enum']
+    assert 'image' not in request.call_args.kwargs['json']['response_format']['json_schema']['schema']['properties']['actions']['items']['properties']['kind']['enum']
 
 
 def test_reference_mode_does_not_silently_fall_back_when_vision_is_rejected(tmp_path, monkeypatch):
