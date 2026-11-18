@@ -1,7 +1,7 @@
-"""Thin shim: the drawing language lives in ~/AGi/canvas (pip: grace-canvas).
+"""Thin shim: the drawing language lives in ~/AGi/capability/canvas (pip: grace-canvas).
 
 Raster painting ('image' actions) is registered by grace-imagegen from
-~/AGi/imaging.
+~/AGi/capability/imaging.
 Re-exports keep `aiva_chat.node` and the existing tests working unchanged.
 """
 from canvas.engine import (DRAW_TOOL, DRAW_INSTRUCTIONS, validate_actions,

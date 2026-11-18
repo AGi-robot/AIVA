@@ -7,8 +7,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # Repository root, one level above this script
 REPO_DIR="$(dirname -- "$SCRIPT_DIR")"
-CANVAS_SOURCE_DIR="${AGI_CANVAS_SOURCE_DIR:-$REPO_DIR/canvas}"
-IMAGING_SOURCE_DIR="${AGI_IMAGING_SOURCE_DIR:-$REPO_DIR/imaging}"
+CANVAS_SOURCE_DIR="${AGI_CANVAS_SOURCE_DIR:-$REPO_DIR/capability/canvas}"
+IMAGING_SOURCE_DIR="${AGI_IMAGING_SOURCE_DIR:-$REPO_DIR/capability/imaging}"
 # Python venv location (default: .venv next to this script; override with AIVA_VENV)
 VENV_DIR="${AIVA_VENV:-$SCRIPT_DIR/.venv}"
 
