@@ -30,6 +30,15 @@ AIVA/shell/src/cryptic_signal_core   -> ../../cypher
 AIVA/shell/src/telepathic_management -> ../../telepathy
 ```
 
+The standalone text conversation engine is checked out beside Shell at
+`AIVA/interaction` and installed by `AIVA/requirements.txt`. Clone it before
+installing the workspace requirements:
+
+```sh
+cd ~/AGi/AIVA
+git clone https://github.com/AGi-robot/interaction.git interaction
+```
+
 Install ROS dependencies before the first build:
 
 ```sh
@@ -50,10 +59,11 @@ executable is a ROS node:
 
 | Component | What it runs | ROS node? |
 |---|---|---:|
-| `aiva_chat` | Chat, LLM requests, Canvas orchestration, and the `GraceMemory` adapter | Yes |
+| `aiva_chat` | ROS adapter for Telepathy input/output, Interaction turns, Canvas orchestration, and the `GraceMemory` adapter | Yes |
 | `agi_logging` | Collects `/rosout`, writes JSONL logs, and publishes `/agi/logs` | Yes |
 | `rosbridge_server` | ROS WebSocket bridge started by `launch.sh` | Yes, from the ROS distribution |
 | `telepathic_management` | Telepathy WebUI server, started as `telepathic_console`; it sends/receives ROS traffic through rosbridge | No; standalone web process in a ROS package |
+| Interaction (`agi-interaction`) | Reusable text conversation engine imported by `aiva_chat` from the venv | No |
 | Memory (`agi-memory`) | Reusable Python/SQLite library imported by `aiva_chat` from the venv | No |
 | `aiva_cryptic_signal_core` and `cryptic_signal_core` (Cypher) | Encoding library and ROS message definitions | No |
 | `scs` / `aiva-presence` | HTTP heartbeat process for the Web Teleops Console | No; standalone process packaged for `ros2 run` |
@@ -122,10 +132,12 @@ for setup and run instructions.
 
 ## AIVA chat and simple memory
 
-Chat runs in the separate `aiva_chat` ROS package, not in SCS. It decodes
-`/telepathic/stimulus`, sends recent turns to an OpenAI-compatible chat API,
-and publishes `start` / `delta` / `done` response events on
-`/tms/text_response`, which the WebUI already displays. Recent turns persist
+The `aiva_chat` ROS package receives and decodes
+`/telepathic/stimulus`, then delegates text turns to
+[Interaction](https://github.com/AGi-robot/interaction). Interaction sends
+recent turns to an OpenAI-compatible chat API and emits `start` / `delta` /
+`done` response events; Shell publishes them on `/tms/text_response`, which the
+WebUI already displays. Recent turns persist
 in SQLite at `~/.agi/profile/grace_memory.sqlite3` by default. The path follows
 the `agi_home` parameter and can be overridden with `AIVA_MEMORY_PATH`. The
 node sends the latest 8 exchanges to the LLM as active context; older turns
