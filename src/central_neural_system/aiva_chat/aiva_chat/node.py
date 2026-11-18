@@ -6,16 +6,15 @@ import os
 import re
 import base64
 import threading
-from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from time import perf_counter
-from zoneinfo import ZoneInfo
 from uuid import uuid4
 
 import httpx
 import rclpy
+from agi_interaction import ConversationEngine
 from aiva_cryptic_signal_core import CrypticSignalCore
 from cryptic_signal_core.msg import TelepathicSignal
 from rclpy.node import Node
@@ -170,6 +169,21 @@ class AivaChat(Node):
             f"WebUI input {self.get_parameter('webui_input_topic').value}; "
             f"LLM={self._base_url} chat_model={self._model} draw_model={self._draw_model}"
         )
+        self._interaction = self._make_interaction()
+
+    def _make_interaction(self) -> ConversationEngine:
+        """Build the transport-independent turn engine with Shell-owned adapters."""
+        return ConversationEngine(
+            memory=self._memory,
+            publish=self._publish,
+            base_url=self._base_url,
+            model=self._model,
+            system_prompt=self._system_prompt,
+            api_key=self._api_key,
+            timezone_name=os.getenv("AIVA_TIMEZONE", "America/Vancouver"),
+            stream=lambda *args, **kwargs: httpx.stream(*args, **kwargs),
+            logger=self.get_logger(),
+        )
 
     def _submit_prompt(self, text: str, identifier: str = "") -> None:
         text = text.strip()
@@ -279,120 +293,11 @@ class AivaChat(Node):
         self._response_pub.publish(message)
 
     def _answer(self, text: str, identifier: str) -> None:
-        started_at = perf_counter()
-        try:
-            timezone_name = os.getenv("AIVA_TIMEZONE", "America/Vancouver")
-            now = datetime.now(ZoneInfo(timezone_name))
-            normalized_text = text.casefold()
-            asks_for_clock = bool(re.search(
-                r"\b(?:what(?:'s| is)?\s+(?:the\s+)?time(?:\s+is\s+it)?|"
-                r"what\s+time\s+is\s+it|do\s+you\s+know\s+(?:(?:what|the)\s+)?time(?:\s+it\s+is)?|"
-                r"tell\s+me\s+(?:the\s+)?time|current\s+time|time\s+(?:right\s+now|now|again))\b",
-                normalized_text,
-            ))
-            asks_for_date = bool(re.search(
-                r"\b(?:what(?:'s| is)?\s+(?:today's\s+)?date|what(?:'s| is)?\s+the\s+date\s+today|"
-                r"what(?:'s| is)?\s+(?:the\s+)?day\s+(?:today|is\s+it)|current\s+date|today's\s+date|date\s+today)\b",
-                normalized_text,
-            ))
-            if asks_for_clock or asks_for_date:
-                local_date = f"{now.strftime('%A, %B')} {now.day}, {now.year}"
-                local_time = now.strftime("%I:%M %p").lstrip("0")
-                if asks_for_clock and asks_for_date:
-                    answer = f"It’s {local_date} at {local_time} {now.tzname()} ({timezone_name})."
-                elif asks_for_clock:
-                    answer = f"It’s {local_time} {now.tzname()} ({timezone_name}) on {local_date}."
-                else:
-                    answer = f"Today is {local_date} ({timezone_name})."
-                self._publish({"type": "start", "content": "", "radio_id": identifier})
-                self._publish({"type": "delta", "content": answer, "radio_id": identifier})
-                self._memory.add_exchange(text, answer)
-                self._publish({
-                    "type": "done",
-                    "content": "",
-                    "radio_id": identifier,
-                    "metrics": {
-                        "latency_ms": round((perf_counter() - started_at) * 1000),
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0,
-                    },
-                })
-                return
-            current_time = (
-                f"Current local date and time: {now.strftime('%A, %B %d, %Y at %I:%M:%S %p %Z')} "
-                f"in the {timezone_name} timezone (UTC offset {now.strftime('%z')}). "
-                "Use this as the authoritative current time for the user."
-            )
-            messages = [{"role": "system", "content": f"{self._system_prompt}\n\n{current_time}"}]
-            messages.extend(self._memory.recent())
-            messages.append({"role": "user", "content": text})
-            headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-            self._publish({"type": "start", "content": "", "radio_id": identifier})
-            answer_parts: list[str] = []
-            usage: dict = {}
-            timings: dict = {}
-            with httpx.stream(
-                "POST",
-                f"{self._base_url}/chat/completions",
-                json={
-                    "model": self._model,
-                    "messages": messages,
-                    "stream": True,
-                    "stream_options": {"include_usage": True},
-                },
-                headers=headers,
-                timeout=120,
-            ) as response:
-                self.get_logger().info(f"LLM streaming request returned HTTP {response.status_code}")
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    payload = line[5:].strip()
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        event = json.loads(payload)
-                    except (TypeError, json.JSONDecodeError):
-                        continue
-                    if isinstance(event.get("usage"), dict):
-                        usage = event["usage"]
-                    if isinstance(event.get("timings"), dict):
-                        timings = event["timings"]
-                    choices = event.get("choices") or []
-                    if not choices:
-                        continue
-                    chunk = choices[0].get("delta", {}).get("content", "")
-                    if isinstance(chunk, str) and chunk:
-                        answer_parts.append(chunk)
-                        self._publish({"type": "delta", "content": chunk, "radio_id": identifier})
-
-            answer = "".join(answer_parts).strip()
-            if not answer:
-                raise ValueError("LLM returned an empty response")
-            self._memory.add_exchange(text, answer)
-            prompt_tokens = usage.get("prompt_tokens", timings.get("prompt_n"))
-            completion_tokens = usage.get("completion_tokens", timings.get("predicted_n"))
-            if prompt_tokens is not None and completion_tokens is not None:
-                total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
-            else:
-                total_tokens = usage.get("total_tokens")
-            self._publish({
-                "type": "done",
-                "content": "",
-                "radio_id": identifier,
-                "metrics": {
-                    "latency_ms": round((perf_counter() - started_at) * 1000),
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
-                },
-            })
-            self.get_logger().info(f"Published Grace reply (id={identifier})")
-        except Exception as error:  # report provider/network failures to the chat UI
-            self.get_logger().error(f"AIVA LLM request failed: {error}")
-            self._publish({"type": "error", "content": f"AIVA could not reach its LLM: {error}", "radio_id": identifier})
+        engine = getattr(self, "_interaction", None)
+        if engine is None:
+            engine = self._make_interaction()
+            self._interaction = engine
+        engine.answer(text, identifier)
 
     def _paint_available(self) -> bool:
         """True when raster painting is enabled and its weights are installed."""

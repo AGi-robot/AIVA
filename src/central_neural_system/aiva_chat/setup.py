@@ -19,7 +19,7 @@ setup(
     zip_safe=True,
     maintainer="OppaAI",
     maintainer_email="oppa.ai.org@gmail.com",
-    description="AIVA LLM chat and simple conversation memory",
+    description="ROS adapter for Grace's Interaction conversation engine",
     license="GPL-3.0-only",
     entry_points={"console_scripts": ["aiva_chat = aiva_chat.node:main"]},
 )
