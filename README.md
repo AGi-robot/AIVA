@@ -10,12 +10,13 @@ To start the local WebUI, rosbridge, and chat node together, run:
 cd ~/AGi/AIVA/shell
 /usr/bin/python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pip install -r requirements.txt
-./launch.sh
+../launch.sh
 ```
 
 The venv includes the system ROS 2 Python packages through
 `--system-site-packages`; this lets the chat node use ROS Jazzy's `rclpy` while
-keeping pip-installed AIVA dependencies inside `AIVA/shell/.venv`. `launch.sh` builds
+keeping pip-installed AIVA dependencies inside `AIVA/shell/.venv`. `launch.sh`
+(lives at `AIVA/launch.sh`, one level up) builds
 with that venv's Python and starts the AIVA services with it. If you keep the
 venv elsewhere, set `AIVA_VENV=/path/to/venv` when launching.
 

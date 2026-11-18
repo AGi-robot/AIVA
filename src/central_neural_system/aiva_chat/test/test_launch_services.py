@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-LAUNCH_SCRIPT = Path(__file__).resolve().parents[4] / "launch.sh"
+LAUNCH_SCRIPT = Path(__file__).resolve().parents[5] / "launch.sh"
 
 
 @pytest.fixture
@@ -15,22 +15,24 @@ LAUNCH_SCRIPT = Path(__file__).resolve().parents[4] / "launch.sh"
 def fake_aiva(tmp_path):
     aiva = tmp_path / "AIVA"
     aiva.mkdir()
+    shell = aiva / "shell"
+    shell.mkdir()
     (aiva / "launch.sh").write_bytes(LAUNCH_SCRIPT.read_bytes())
     ros_setup = tmp_path / "ros_setup.bash"
     ros_setup.write_text("# fake ROS environment for launch-service test\n")
-    venv_python = aiva / ".venv" / "bin" / "python"
+    venv_python = shell / ".venv" / "bin" / "python"
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("#!/usr/bin/env bash\nexit 0\n")
     venv_python.chmod(0o755)
-    setup = aiva / "install" / "setup.bash"
+    setup = shell / "install" / "setup.bash"
     setup.parent.mkdir(parents=True)
     setup.write_text("# fake colcon workspace\n")
-    marker = aiva / "install" / "fake_pkg" / "share" / "ament_index" / "resource_index" / "packages" / "fake_pkg"
+    marker = shell / "install" / "fake_pkg" / "share" / "ament_index" / "resource_index" / "packages" / "fake_pkg"
     marker.parent.mkdir(parents=True)
     marker.touch()
 
     for package in ("cryptic_signal_core", "telepathic_management", "agi_memory"):
-        package_dir = aiva / "src" / package
+        package_dir = shell / "src" / package
         package_dir.mkdir(parents=True)
         (package_dir / "package.xml").touch()
 
@@ -56,7 +58,6 @@ exec sleep 60
     env.update({
         "PATH": f"{bin_dir}:{env['PATH']}",
         "ROS_SETUP": str(ros_setup),
-        "AIVA_VENV": str(aiva / ".venv"),
         "AIVA_LOG_DIR": str(tmp_path / "logs"),
         "AIVA_LLM_MODEL": "test-model",
         # The launch-service tests exercise ROS/WebUI lifecycle only; keep
