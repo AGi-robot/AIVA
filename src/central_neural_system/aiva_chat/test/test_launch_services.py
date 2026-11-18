@@ -31,7 +31,7 @@ def fake_aiva(tmp_path):
     marker.parent.mkdir(parents=True)
     marker.touch()
 
-    for package in ("cryptic_signal_core", "telepathic_management", "agi_memory"):
+    for package in ("cryptic_signal_core", "telepathic_management"):
         package_dir = shell / "src" / package
         package_dir.mkdir(parents=True)
         (package_dir / "package.xml").touch()

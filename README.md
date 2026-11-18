@@ -26,7 +26,6 @@ The package links resolve inside this AGi checkout:
 ```text
 AIVA/shell/src/cryptic_signal_core   -> ../../cypher
 AIVA/shell/src/telepathic_management -> ../../telepathy
-AIVA/shell/src/agi_memory           -> ../../mind/memory
 ```
 
 Install ROS dependencies before the first build:
@@ -39,8 +38,8 @@ rosdep install --from-paths src --ignore-src -r -y
 After moving an existing workspace, move its generated `build/` and `install/`
 directories aside before rebuilding; CMake and installed scripts contain absolute
 paths. Recreate a moved `.venv` and reinstall requirements if its activation or
-command scripts still point to the old directory. `launch.sh` adds the linked
-local memory source to Python's import path for its processes.
+command scripts still point to the old directory. Memory is installed editable
+from its checkout into this venv by `requirements.txt`.
 
 ## ROS packages and processes
 
@@ -53,7 +52,7 @@ executable is a ROS node:
 | `agi_logging` | Collects `/rosout`, writes JSONL logs, and publishes `/agi/logs` | Yes |
 | `rosbridge_server` | ROS WebSocket bridge started by `launch.sh` | Yes, from the ROS distribution |
 | `telepathic_management` | Telepathy WebUI server, started as `telepathic_console`; it sends/receives ROS traffic through rosbridge | No; standalone web process in a ROS package |
-| `agi_memory` (Memory) | Reusable Python memory library imported by `aiva_chat` | No; a ROS package for discovery/build ordering |
+| Memory (`agi-memory`) | Reusable Python/SQLite library imported by `aiva_chat` from the venv | No |
 | `aiva_cryptic_signal_core` and `cryptic_signal_core` (Cypher) | Encoding library and ROS message definitions | No |
 | `scs` / `aiva-presence` | HTTP heartbeat process for the Web Teleops Console | No; standalone process packaged for `ros2 run` |
 | Canvas, Imaging, llama.cpp, MossInfer | Python capabilities, model service, or painting sidecar used by the chat flow | No |
@@ -80,11 +79,15 @@ at a different path.
 
 The parent AGi repository has GitHub Actions jobs for the shared Telepathy and
 Cypher packages. Shell also includes local launcher lifecycle, chat adapter,
-memory, drawing, and ROS graph checks. Run the non-ROS checks from `~/AGi`:
+memory, drawing, and ROS graph checks. Install the local editable Memory
+package and test dependencies with the same venv from the Shell directory, then
+run non-ROS checks from `~/AGi`:
 
 ```sh
-python3 -m pip install pytest -r AIVA/shell/requirements.txt
-PYTHONPATH=capability/canvas/src:capability/imaging/src:AIVA/mind/memory/src:AIVA/shell/src/central_neural_system/aiva_chat:AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core:AIVA/shell/src/cryptic_signal_core \
+cd ~/AGi/AIVA/shell
+.venv/bin/python -m pip install pytest -r requirements.txt
+cd ~/AGi
+PYTHONPATH=capability/canvas/src:capability/imaging/src:AIVA/shell/src/central_neural_system/aiva_chat:AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core:AIVA/shell/src/cryptic_signal_core \
   python3 -m pytest -q AIVA/shell/src/central_neural_system/aiva_chat/test AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core/test
 ```
 
@@ -94,7 +97,7 @@ example, `src/central_neural_system/aiva_cryptic_signal_core` is AIVA's encoding
 ```sh
 cd ~/AGi/AIVA/shell
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-up-to aiva_chat telepathic_management agi_logging agi_memory
+colcon build --packages-up-to aiva_chat telepathic_management agi_logging
 ```
 
 The shared WebUI backend uses AIVA's `CrypticSignalCore` when the AIVA package is
@@ -127,8 +130,9 @@ node sends the latest 8 exchanges to the LLM as active context; older turns
 remain stored but are not semantically recalled yet.
 
 The reusable SQLite conversation store is provided by
-[Memory](https://github.com/AGi-robot/memory) (`agi-memory`), installed through
-`requirements.txt`. AIVA's `GraceMemory` adapter extends that store with
+[Memory](https://github.com/AGi-robot/memory) (`agi-memory`), installed as an
+editable Python package from `../mind/memory` through `requirements.txt`. AIVA's
+`GraceMemory` adapter extends that store with
 Grace-specific Canvas study records and trims legacy drawing payloads from
 chat context. AIVA still configures the database path and decides what context
 to send to the model; Memory does not run the chat loop or perform semantic
@@ -147,14 +151,9 @@ points elsewhere. For a different endpoint, set `AIVA_LLM_BASE_URL` and
 The default chat model has no vision projector. For image input or reference
 drawing, set `AIVA_LLM_MODEL=swift15-qwen3.8-27b` before launching.
 
-Memory is checked out at `~/AGi/AIVA/mind/memory`; the `agi_memory` ROS package is
-linked from `AIVA/shell/src/agi_memory` to `AIVA/mind/memory`. If the link is
-missing, recreate it from the shell workspace root with:
-
-```sh
-cd ~/AGi/AIVA/shell
-ln -s ../../mind/memory src/agi_memory
-```
+Memory is checked out at `~/AGi/AIVA/mind/memory` and installed into the Shell
+virtual environment with the other Python requirements. It is a Python library,
+not a ROS package; colcon does not build it.
 
 The shared Telepathy console is maintained in [AGi-robot/telepathy](https://github.com/AGi-robot/telepathy). Clone it beside this repository so the existing `src/telepathic_management` link resolves:
 
@@ -168,7 +167,7 @@ Build the AIVA packages from this workspace:
 ```sh
 cd ~/AGi/AIVA/shell
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-up-to telepathic_management aiva_chat agi_logging agi_memory
+colcon build --packages-up-to telepathic_management aiva_chat agi_logging
 source install/setup.bash
 ```
 
