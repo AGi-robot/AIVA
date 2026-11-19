@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/agi/aiva-presence.env
-ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source %h/AGi/AIVA/shell/install/setup.bash && exec ros2 run scs aiva-presence'
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source %h/AGi/AIVA/shell/install/setup.bash && exec ros2 run aiva_presence aiva-presence'
 Restart=always
 RestartSec=5
 

@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'scs'
+package_name = 'aiva_presence'
 
 setup(
     name=package_name,
@@ -15,7 +15,7 @@ setup(
     zip_safe=True,
     maintainer='OppaAI',
     maintainer_email='oppa.ai.org@gmail.com',
-    description='TODO: Package description',
+    description='AIVA presence heartbeat for Grace',
     license='GPL-3.0-only',
     extras_require={
         'test': [
@@ -24,7 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'aiva-presence = scs.presence:main',
+            'aiva-presence = aiva_presence.presence:main',
         ],
     },
 )
