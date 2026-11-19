@@ -18,8 +18,6 @@ msg/_*.py
 build_isolated/
 devel_isolated/
 resource/
-!src/central_neural_system/agi_logging/resource/
-!src/central_neural_system/agi_logging/resource/agi_logging
 !src/central_neural_system/aiva_chat/resource/
 !src/central_neural_system/aiva_chat/resource/aiva_chat
 .vscode/
@@ -63,3 +61,6 @@ qtcreator-*
 
 # Catkin custom files
 CATKIN_IGNORE
+
+# Health is checked out in the parent AGi workspace and linked into src.
+/src/agi_logging

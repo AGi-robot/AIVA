@@ -28,6 +28,17 @@ The package links resolve inside this AGi checkout:
 ```text
 AIVA/shell/src/cryptic_signal_core   -> ../../cypher
 AIVA/shell/src/telepathic_management -> ../../telepathy
+AIVA/shell/src/agi_logging           -> ../../health
+```
+
+The Health ROS package is checked out beside Shell at `AIVA/health` and linked
+into the colcon workspace as `src/agi_logging`. Clone and link it before the
+first build:
+
+```sh
+cd ~/AGi/AIVA
+git clone https://github.com/AGi-robot/health.git health
+ln -s ../../health shell/src/agi_logging
 ```
 
 The standalone text conversation engine is checked out beside Shell at
@@ -55,13 +66,13 @@ from its checkout into this venv by `requirements.txt`.
 
 ## ROS packages and processes
 
-The `shell` colcon workspace contains ROS packages, but not every package
-executable is a ROS node:
+The `shell` colcon workspace builds ROS packages from Shell and linked
+component repositories. Not every package executable is a ROS node:
 
 | Component | What it runs | ROS node? |
 |---|---|---:|
 | `aiva_chat` | ROS adapter for Telepathy input/output, Interaction turns, Canvas orchestration, and the `GraceMemory` adapter | Yes |
-| `agi_logging` | Collects `/rosout`, writes JSONL logs, and publishes `/agi/logs` | Yes |
+| Health (`agi_logging`) | Linked from the Health repo; collects `/rosout`, writes JSONL logs, and publishes `/agi/logs` | Yes |
 | `rosbridge_server` | ROS WebSocket bridge started by `launch.sh` | Yes, from the ROS distribution |
 | `telepathic_management` | Telepathy WebUI server, started as `telepathic_console`; it sends/receives ROS traffic through rosbridge | No; standalone web process in a ROS package |
 | Interactive (`agi-interactive`) | Reusable text conversation engine imported by `aiva_chat` from the venv | No |
