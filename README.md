@@ -31,12 +31,12 @@ AIVA/shell/src/telepathic_management -> ../../telepathy
 ```
 
 The standalone text conversation engine is checked out beside Shell at
-`AIVA/interaction` and installed by `AIVA/requirements.txt`. Clone it before
+`AIVA/interactive` and installed by `AIVA/requirements.txt`. Clone it before
 installing the workspace requirements:
 
 ```sh
 cd ~/AGi/AIVA
-git clone https://github.com/AGi-robot/interaction.git interaction
+git clone https://github.com/AGi-robot/interactive.git interactive
 ```
 
 Install ROS dependencies before the first build:
@@ -63,7 +63,7 @@ executable is a ROS node:
 | `agi_logging` | Collects `/rosout`, writes JSONL logs, and publishes `/agi/logs` | Yes |
 | `rosbridge_server` | ROS WebSocket bridge started by `launch.sh` | Yes, from the ROS distribution |
 | `telepathic_management` | Telepathy WebUI server, started as `telepathic_console`; it sends/receives ROS traffic through rosbridge | No; standalone web process in a ROS package |
-| Interaction (`agi-interaction`) | Reusable text conversation engine imported by `aiva_chat` from the venv | No |
+| Interactive (`agi-interactive`) | Reusable text conversation engine imported by `aiva_chat` from the venv | No |
 | Memory (`agi-memory`) | Reusable Python/SQLite library imported by `aiva_chat` from the venv | No |
 | `aiva_cryptic_signal_core` and `cryptic_signal_core` (Cypher) | Encoding library and ROS message definitions | No |
 | `aiva_presence` / `aiva-presence` | Grace's HTTP heartbeat process for the Web Teleops Console | No; standalone process packaged for `ros2 run` |
@@ -134,7 +134,7 @@ for setup and run instructions.
 
 The `aiva_chat` ROS package receives and decodes
 `/telepathic/stimulus`, then delegates text turns to
-[Interaction](https://github.com/AGi-robot/interaction). Interaction sends
+[Interactive](https://github.com/AGi-robot/interactive). Interactive sends
 recent turns to an OpenAI-compatible chat API and emits `start` / `delta` /
 `done` response events; Shell publishes them on `/tms/text_response`, which the
 WebUI already displays. Recent turns persist
