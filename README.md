@@ -1,5 +1,23 @@
 # Shell — Grace runtime
 
+Telepathy Console moved to `AGi-robot/console`; the entity receptor moved to
+`AGi-robot/telepathy`. Before rebuilding, update the sibling checkouts and links:
+
+```sh
+cd ~/AGi/AIVA
+# Clone console if it does not exist, then update all component dev branches.
+git clone https://github.com/AGi-robot/console.git console
+cd shell
+ln -sfn ../../console src/telepathic_management
+ln -sfn ../../telepathy src/telepathy_receptor
+# Remove stale build/install/aiva_chat artifacts before rebuilding in a fresh terminal.
+```
+
+`launch.sh` now starts `/telepathy_receptor`; `/aiva_chat` is retired.
+Grace startup does not launch AuRoRA's RAS, SCS, HRM or TMS nodes. ROS bridge,
+Health and the model service support the runtime. The Console is an external UI.
+The `aiva_cryptic_signal_core` library remains here as Grace's scheme registry.
+
 ## Quick start
 
 Open the AGi workspace in VS Code. The ROS workspace lives in the separate
@@ -27,7 +45,7 @@ The package links resolve inside this AGi checkout:
 
 ```text
 AIVA/shell/src/cryptic_signal_core   -> ../../cypher
-AIVA/shell/src/telepathic_management -> ../../telepathy
+AIVA/shell/src/telepathic_management -> ../../console
 AIVA/shell/src/agi_logging           -> ../../health
 ```
 
@@ -71,17 +89,17 @@ component repositories. Not every package executable is a ROS node:
 
 | Component | What it runs | ROS node? |
 |---|---|---:|
-| `aiva_chat` | ROS adapter for Telepathy input/output, Interaction turns, Canvas orchestration, and the `GraceMemory` adapter | Yes |
+| `telepathy_receptor` | ROS adapter for Telepathy input/output, Interaction turns, Canvas orchestration, and the `GraceMemory` adapter | Yes |
 | Health (`agi_logging`) | Linked from the Health repo; collects `/rosout`, writes JSONL logs, and publishes `/agi/logs` | Yes |
 | `rosbridge_server` | ROS WebSocket bridge started by `launch.sh` | Yes, from the ROS distribution |
 | `telepathic_management` | Telepathy WebUI server, started as `telepathic_console`; it sends/receives ROS traffic through rosbridge | No; standalone web process in a ROS package |
-| Interactive (`agi-interactive`) | Reusable text conversation engine imported by `aiva_chat` from the venv | No |
-| Memory (`agi-memory`) | Reusable Python/SQLite library imported by `aiva_chat` from the venv | No |
+| Interactive (`agi-interactive`) | Reusable text conversation engine imported by `telepathy_receptor` from the venv | No |
+| Memory (`agi-memory`) | Reusable Python/SQLite library imported by `telepathy_receptor` from the venv | No |
 | `aiva_cryptic_signal_core` and `cryptic_signal_core` (Cypher) | Encoding library and ROS message definitions | No |
 | `aiva_presence` / `aiva-presence` | Grace's HTTP heartbeat process for the Web Teleops Console | No; standalone process packaged for `ros2 run` |
 | Canvas, Imaging, llama.cpp, MossInfer | Python capabilities, model service, or painting sidecar used by the chat flow | No |
 
-Memory currently runs in the `aiva_chat` process and stores data in SQLite.
+Memory currently runs in the `telepathy_receptor` process and stores data in SQLite.
 Keep it as a library unless several ROS processes need to share one memory
 service. Likewise, Canvas and Imaging do not need ROS wrappers unless other ROS
 processes need to invoke them through ROS topics, services, or actions.
@@ -117,8 +135,8 @@ package and test dependencies with AIVA's root venv, then run non-ROS checks fro
 cd ~/AGi/AIVA
 .venv/bin/python -m pip install pytest -r requirements.txt
 cd ~/AGi
-PYTHONPATH=capability/canvas/src:capability/imaging/src:AIVA/shell/src/central_neural_system/aiva_chat:AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core:AIVA/shell/src/cryptic_signal_core \
-  AIVA/.venv/bin/python -m pytest -q AIVA/shell/src/central_neural_system/aiva_chat/test AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core/test
+PYTHONPATH=capability/canvas/src:capability/imaging/src:AIVA/shell/../telepathy:AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core:AIVA/shell/src/cryptic_signal_core \
+  AIVA/.venv/bin/python -m pytest -q AIVA/shell/../telepathy/test AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core/test
 ```
 
 Packages grouped under `src/central_neural_system/` belong to AIVA's central neural system. For
@@ -127,7 +145,7 @@ example, `src/central_neural_system/aiva_cryptic_signal_core` is AIVA's encoding
 ```sh
 cd ~/AGi/AIVA/shell
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-up-to aiva_chat telepathic_management agi_logging
+colcon build --packages-up-to telepathy_receptor telepathic_management agi_logging
 ```
 
 The shared WebUI backend uses AIVA's `CrypticSignalCore` when the AIVA package is
@@ -150,7 +168,7 @@ for setup and run instructions.
 
 ## AIVA chat and simple memory
 
-The `aiva_chat` ROS package receives and decodes
+The `telepathy_receptor` ROS package receives and decodes
 `/telepathic/stimulus`, then delegates text turns to
 [Interactive](https://github.com/AGi-robot/interactive). Interactive sends
 recent turns to an OpenAI-compatible chat API and emits `start` / `delta` /
@@ -201,7 +219,7 @@ Build the AIVA packages from this workspace:
 ```sh
 cd ~/AGi/AIVA/shell
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-up-to telepathic_management aiva_chat agi_logging
+colcon build --packages-up-to telepathic_management telepathy_receptor agi_logging
 source install/setup.bash
 ```
 
@@ -223,14 +241,14 @@ Then start one service per terminal:
 
 ```sh
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml address:=127.0.0.1
-ros2 run aiva_chat aiva_chat
+ros2 run telepathy_receptor telepathy_receptor
 ros2 run agi_logging agi_log_collector
 ros2 run telepathic_management telepathic_console
 ```
 
 The chat node reads `profile/user.md` from the AGi data directory. The ROS
 parameter `agi_home` defaults to `~/.agi` and can be set with `AGI_HOME` or a
-ROS override such as `ros2 run aiva_chat aiva_chat --ros-args -p agi_home:=/path/to/.agi`.
+ROS override such as `ros2 run telepathy_receptor telepathy_receptor --ros-args -p agi_home:=/path/to/.agi`.
 The profile is added to Grace's system context when the file exists.
 
 Rosbridge must listen at `127.0.0.1:9090`; the console backend publishes the
