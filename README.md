@@ -42,6 +42,7 @@ git clone https://github.com/AGi-robot/interactive.git interactive
 Install ROS dependencies before the first build:
 
 ```sh
+cd ~/AGi/AIVA/shell
 source /opt/ros/jazzy/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 ```
@@ -85,6 +86,12 @@ and the WebUI without chat or the local model router. The script expects ROS 2
 Jazzy and builds the workspace on each launch; set `ROS_SETUP` if ROS is installed
 at a different path.
 
+In a separate terminal, source `/opt/ros/jazzy/setup.bash` and then
+`~/AGi/AIVA/shell/install/setup.bash` before using `ros2 pkg list` to inspect
+AIVA packages. Nodes appear in `ros2 node list` only while the services are
+running; a launch that exited has already stopped its services. See the parent
+`AIVA/README.md` for the distinction between AIVA and AuRoRA settings.
+
 ## Central neural system packages
 
 ### Automated checks
@@ -100,7 +107,7 @@ cd ~/AGi/AIVA
 .venv/bin/python -m pip install pytest -r requirements.txt
 cd ~/AGi
 PYTHONPATH=capability/canvas/src:capability/imaging/src:AIVA/shell/src/central_neural_system/aiva_chat:AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core:AIVA/shell/src/cryptic_signal_core \
-  python3 -m pytest -q AIVA/shell/src/central_neural_system/aiva_chat/test AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core/test
+  AIVA/.venv/bin/python -m pytest -q AIVA/shell/src/central_neural_system/aiva_chat/test AIVA/shell/src/central_neural_system/aiva_cryptic_signal_core/test
 ```
 
 Packages grouped under `src/central_neural_system/` belong to AIVA's central neural system. For
@@ -197,6 +204,7 @@ source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 source ../.venv/bin/activate
 export PYTHONPATH="$(../.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$(cd ../.. && pwd)/capability/canvas/src:$(cd ../.. && pwd)/capability/imaging/src:$(cd .. && pwd)/interactive/src:$(cd .. && pwd)/mind/memory/src:$PYTHONPATH"
 export AIVA_LLM_MODEL="${AIVA_LLM_MODEL:-ministral-3-8b-uncensored}"
 ```
 
