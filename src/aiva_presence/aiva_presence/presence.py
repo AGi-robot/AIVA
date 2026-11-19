@@ -1,4 +1,4 @@
-"""Send an authenticated-tailnet presence heartbeat to AuRoRA's Web Teleops Console."""
+"""Send Grace's authenticated-tailnet presence heartbeat to the Web Teleops Console."""
 from __future__ import annotations
 
 import json

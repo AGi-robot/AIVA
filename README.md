@@ -66,7 +66,7 @@ executable is a ROS node:
 | Interaction (`agi-interaction`) | Reusable text conversation engine imported by `aiva_chat` from the venv | No |
 | Memory (`agi-memory`) | Reusable Python/SQLite library imported by `aiva_chat` from the venv | No |
 | `aiva_cryptic_signal_core` and `cryptic_signal_core` (Cypher) | Encoding library and ROS message definitions | No |
-| `scs` / `aiva-presence` | HTTP heartbeat process for the Web Teleops Console | No; standalone process packaged for `ros2 run` |
+| `aiva_presence` / `aiva-presence` | Grace's HTTP heartbeat process for the Web Teleops Console | No; standalone process packaged for `ros2 run` |
 | Canvas, Imaging, llama.cpp, MossInfer | Python capabilities, model service, or painting sidecar used by the chat flow | No |
 
 Memory currently runs in the `aiva_chat` process and stores data in SQLite.
@@ -235,10 +235,10 @@ URL, and run this as a user service on the AIVA PC:
 ```sh
 cd ~/AGi/AIVA/shell
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select scs
+colcon build --packages-select aiva_presence
 source install/setup.bash
 export AGI_WEB_TELEOPS_CONSOLE_PRESENCE_URL="https://your-aurora-machine.your-tailnet.ts.net/api/presence/aiva"
-ros2 run scs aiva-presence
+ros2 run aiva_presence aiva-presence
 ```
 
 Keep AIVA and AuRoRA on the same tailnet and use its ACL/grant rules to restrict
