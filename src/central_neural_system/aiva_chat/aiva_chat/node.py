@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import httpx
 import rclpy
-from agi_interaction import ConversationEngine
+from agi_interactive import ConversationEngine
 from aiva_cryptic_signal_core import CrypticSignalCore
 from cryptic_signal_core.msg import TelepathicSignal
 from rclpy.node import Node
