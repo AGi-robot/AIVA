@@ -29,10 +29,11 @@ src/agi_logging            -> ../../health
 
 ## Migration
 
-Update the component dev branches together. If Console is not checked out:
+Update the component dev branches together. From the AGi checkout root, if
+Console is not checked out:
 
 ```sh
-cd ~/AGi/AIVA
+cd AIVA
 git clone --branch dev https://github.com/AGi-robot/console.git console
 cd shell
 ln -sfn ../../console src/telepathic_management
@@ -40,8 +41,9 @@ ln -sfn ../../telepathy src/telepathy_receptor
 ```
 
 Remove stale `build/aiva_chat` and `install/aiva_chat` artifacts before building
-in a fresh terminal. Install the parent AIVA requirements, source
-`/opt/ros/jazzy/setup.bash`, then run `colcon build` inside Shell. Start Grace
+in a fresh terminal. Install the parent AIVA requirements and source the ROS
+setup configured by `paths.ros_setup` in [AIVA's spec](../spec.yaml), then run
+`colcon build` inside Shell. Start Grace
 with `AIVA/launch.sh`. It starts rosbridge, Health's log collector, Console and
 `telepathy_receptor`, plus a model router when needed. Set `AIVA_START_CHAT=0`
 to skip the receptor and local model startup. Ctrl+C shuts down managed services.
