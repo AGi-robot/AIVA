@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-LAUNCH_SCRIPT = Path(__file__).resolve().parents[5] / "launch.sh"
+LAUNCH_SCRIPT = Path(__file__).resolve().parents[2] / "agi/AIVA/launch.sh"
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def fake_aiva(tmp_path):
     (aiva / "launch.sh").write_bytes(LAUNCH_SCRIPT.read_bytes())
     ros_setup = tmp_path / "ros_setup.bash"
     ros_setup.write_text("# fake ROS environment for launch-service test\n")
-    venv_python = shell / ".venv" / "bin" / "python"
+    venv_python = aiva / ".venv" / "bin" / "python"
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("#!/usr/bin/env bash\nexit 0\n")
     venv_python.chmod(0o755)
@@ -31,7 +31,7 @@ def fake_aiva(tmp_path):
     marker.parent.mkdir(parents=True)
     marker.touch()
 
-    for package in ("cryptic_signal_core", "telepathic_management"):
+    for package in ("cryptic_signal_core", "telepathic_management", "telepathy_receptor", "agi_logging"):
         package_dir = shell / "src" / package
         package_dir.mkdir(parents=True)
         (package_dir / "package.xml").touch()
@@ -100,7 +100,7 @@ def run_to_ready(fake_aiva, start_chat):
 @pytest.mark.parametrize(
     ("start_chat", "expected"),
     [
-            ("1", ["launch rosbridge_server", "run aiva_chat", "run telepathic_management", "run agi_logging"]),
+            ("1", ["launch rosbridge_server", "run telepathy_receptor", "run telepathic_management", "run agi_logging"]),
             ("0", ["launch rosbridge_server", "run telepathic_management", "run agi_logging"]),
     ],
 )
